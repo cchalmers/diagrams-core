@@ -118,8 +118,9 @@ module Diagrams.Core.Types
        ) where
 
 import           Control.Arrow             (first, second, (***))
-import           Control.Lens              (Lens', Wrapped (..), Rewrapped, iso, lens,
-                                            over, view, (^.), _Wrapping, _Wrapped)
+import           Control.Lens              (Lens', Rewrapped, Wrapped (..), iso,
+                                            lens, over, view, (^.), _Wrapped,
+                                            _Wrapping)
 import           Control.Monad             (mplus)
 import           Data.AffineSpace          ((.-.))
 import           Data.List                 (isSuffixOf)
@@ -882,7 +883,8 @@ class (HasLinearMap v, Monoid (Render b v)) => Backend b v where
                  -> Render b v  -- ^ Rendering operation to perform
                  -> Result b v  -- ^ Output of the rendering operation
 
-  -- | 'adjustDia' allows the backend to make adjustments to the final
+  -- | XXX
+  --   'adjustDia' allows the backend to make adjustments to the final
   --   diagram (e.g. to adjust the size based on the options) before
   --   rendering it.  It can also make adjustments to the options
   --   record, usually to fill in incompletely specified size
@@ -890,13 +892,20 @@ class (HasLinearMap v, Monoid (Render b v)) => Backend b v where
   --   no adjustments.  See the diagrams-lib package for other useful
   --   implementations.
   adjustDia :: Monoid' m => b -> Options b v
-            -> QDiagram b v m -> (Options b v, QDiagram b v m)
-  adjustDia _ o d = (o,d)
+            -> QDiagram b v m -> (Options b v, Transformation v, QDiagram b v m)
+  adjustDia _ o d = (o,mempty,d)
 
+  -- XXX
   renderDia :: (InnerSpace v, OrderedField (Scalar v), Monoid' m)
             => b -> Options b v -> QDiagram b v m -> Result b v
-  renderDia b opts d = doRender b opts' . renderData b $ d'
-    where (opts', d') = adjustDia b opts d
+  renderDia b opts d = snd (renderDiaWithCoordT b opts d)
+
+  -- XXX
+  renderDiaWithCoordT
+    :: (InnerSpace v, OrderedField (Scalar v), Monoid' m)
+    => b -> Options b v -> QDiagram b v m -> (Transformation v, Result b v)
+  renderDiaWithCoordT b opts d = (t, doRender b opts' . renderData b $ d')
+    where (opts', t, d') = adjustDia b opts d
 
   -- | Backends may override 'renderData' to gain more control over
   --   the way that rendering happens.  A typical implementation might be something like
