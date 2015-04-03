@@ -7,6 +7,7 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE DataKinds          #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports       #-}
 
@@ -85,6 +86,8 @@ import           Linear.Vector
 --  Attributes  --------------------------------------------
 ------------------------------------------------------------
 
+data AttrKind = Attr | MAttr | TAttr
+
 -- $attr
 -- An /attribute/ is anything that determines some aspect of a
 -- diagram's rendering.  The standard diagrams library defines several
@@ -105,7 +108,8 @@ import           Linear.Vector
 --   simply guarantees 'Typeable' and 'Semigroup' constraints.  The
 --   'Semigroup' instance for an attribute determines how it will combine
 --   with other attributes of the same type.
-class (Typeable a, Semigroup a) => AttributeClass a
+class (Typeable a, Semigroup a) => AttributeClass a where
+  type AttrType a :: AttrKind
 
 -- | An existential wrapper type to hold attributes.  Some attributes
 --   are simply inert/static; some are affected by transformations;
@@ -354,7 +358,7 @@ instance HasStyle b => HasStyle (Measured n b) where
 --   diagram or a style). If the object already has an attribute of
 --   the same type, the new attribute is combined on the left with the
 --   existing attribute, according to their semigroup structure.
-applyAttr :: (AttributeClass a, HasStyle d) => a -> d -> d
+applyAttr :: (AttributeClass a, AttrType a ~ Attr, HasStyle d) => a -> d -> d
 applyAttr = applyStyle . attributeToStyle . Attribute
 
 -- | Apply a measured attribute to an instance of 'HasStyle' (such as a
@@ -369,6 +373,6 @@ applyMAttr = applyStyle . attributeToStyle . MAttribute
 --   attribute of the same type, the new attribute is combined on the
 --   left with the existing attribute, according to their semigroup
 --   structure.
-applyTAttr :: (AttributeClass a, Transformable a, V a ~ V d, N a ~ N d, HasStyle d) => a -> d -> d
+applyTAttr :: (AttributeClass a, AttrType a ~ TAttr, Transformable a, V a ~ V d, N a ~ N d, HasStyle d) => a -> d -> d
 applyTAttr = applyStyle . attributeToStyle . TAttribute
 
