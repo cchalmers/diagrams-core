@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE LambdaCase            #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -59,11 +60,9 @@ foldDia' :: (HasLinearMap v, Floating n, Typeable n, Monoid r)
 foldDia' primF annF g n (QD dual) = foldDUAL lF aF dual
   where
     lF d = \case
-      PrimLeaf p    -> case get d of
-        Option (Just a) ->
-          let (tr, sty) = untangle a
-          in primF sty (transform tr p)
-        _ -> primF mempty p
+      PrimLeaf p    ->
+        let (tr, sty) = untangle d
+        in  primF sty (transform tr p)
       DelayedLeaf f ->
         let (QD dia) = f d g n
         in  foldDUAL lF aF dia
