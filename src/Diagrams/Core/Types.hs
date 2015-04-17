@@ -106,15 +106,6 @@ module Diagrams.Core.Types
          -- * Backends
 
        , Backend(..)
-       , DTree
-       , DNode(..)
-
-       , RTree
-       , RNode(..)
-       , _RStyle
-       , _RAnnot
-       , _RPrim
-       , _REmpty
 
          -- ** Null backend
 
@@ -129,7 +120,7 @@ module Diagrams.Core.Types
 
        ) where
 
-import           Control.Arrow             (first, second, (***))
+import           Control.Arrow             (second, (***))
 import           Control.Lens              hiding (transform)
 import           Control.Monad             (mplus)
 import           Data.List                 (isSuffixOf)
@@ -137,7 +128,6 @@ import qualified Data.Map                  as M
 import           Data.Maybe                (fromMaybe, listToMaybe)
 import           Data.Semigroup
 import qualified Data.Traversable          as T
-import           Data.Tree
 import           Data.Typeable
 
 import           Data.Monoid.Action
@@ -528,15 +518,15 @@ atop = (<>)
 
 infixl 6 `atop`
 
----- Functor
+-- Instances -----------------------------------------------------------
 
 instance Functor (QDiagram b v n) where
   fmap f = over (_Wrapping QD)
            ( (D.mapU . second . second)
-             ( (first . fmap . fmap . fmap)   f
-             . (second . first . fmap . fmap) f
+             ( (first . fmap . fmap . fmap)   f -- submap
+             . (second . first . fmap . fmap) f -- query
              )
-           . (fmap . fmap) f
+           . (fmap . fmap) f -- leaf
            )
 
 ---- Applicative
@@ -556,53 +546,39 @@ instance Functor (QDiagram b v n) where
 --   (Diagram ps1 bs1 ns1 smp1) <*> (Diagram ps2 bs2 ns2 smp2)
 --     = Diagram (ps1 <> ps2) (bs1 <> bs2) (ns1 <> ns2) (smp1 <*> smp2)
 
----- HasStyle
-
 instance (Metric v, OrderedField n, Semigroup m)
-      => HasStyle (QDiagram b v n m) where
+    => HasStyle (QDiagram b v n m) where
   applyStyle = over _Wrapped' . D.down . inj
              . (inR :: Style v n -> Transformation v n :+: Style v n)
 
----- Juxtaposable
-
 instance (Metric v, OrderedField n, Monoid' m)
-      => Juxtaposable (QDiagram b v n m) where
+    => Juxtaposable (QDiagram b v n m) where
   juxtapose = juxtaposeDefault
 
----- Enveloped
-
 instance (Metric v, OrderedField n, Monoid' m)
-         => Enveloped (QDiagram b v n m) where
+    => Enveloped (QDiagram b v n m) where
   getEnvelope = view envelope
 
----- Traced
-
 instance (Metric v, OrderedField n, Semigroup m)
-         => Traced (QDiagram b v n m) where
+    => Traced (QDiagram b v n m) where
   getTrace = view trace
-
----- HasOrigin
 
 -- | Every diagram has an intrinsic \"local origin\" which is the
 --   basis for all combining operations.
 instance (Metric v, OrderedField n, Semigroup m)
-      => HasOrigin (QDiagram b v n m) where
+    => HasOrigin (QDiagram b v n m) where
   moveOriginTo = translate . (origin .-.)
-
----- Transformable
 
 -- | Diagrams can be transformed by transforming each of their
 --   components appropriately.
 instance (OrderedField n, Metric v, Semigroup m)
-      => Transformable (QDiagram b v n m) where
+    => Transformable (QDiagram b v n m) where
   transform = over _Wrapped' . D.down . transfToAnnot
-
----- Qualifiable
 
 -- | Diagrams can be qualified so that all their named points can
 --   now be referred to using the qualification prefix.
 instance (Metric v, OrderedField n, Semigroup m)
-      => Qualifiable (QDiagram b v n m) where
+    => Qualifiable (QDiagram b v n m) where
   (.>>) = over _Wrapped' . D.down . inj . toName
 
 
@@ -796,75 +772,9 @@ instance Transformable (Prim b v n) where
 instance Renderable (Prim b v n) b where
   render b (Prim p) = render b p
 
-------------------------------------------------------------
--- Backends  -----------------------------------------------
-------------------------------------------------------------
-
--- | A 'DTree' is a raw tree representation of a 'QDiagram', with all
---   the @u@-annotations removed.  It is used as an intermediate type
---   by diagrams-core; backends should not need to make use of it.
---   Instead, backends can make use of 'RTree', which 'DTree' gets
---   compiled and optimized to.
-type DTree b v n a = Tree (DNode b v n a)
-
-data DNode b v n a = DStyle (Style v n)
-                   | DTransform (Transformation v n)
-                   | DAnnot a
-                   | DDelay
-                     -- ^ @DDelay@ marks a point where a delayed subtree
-                     --   was expanded.  Such subtrees already take all
-                     --   non-frozen transforms above them into account,
-                     --   so when later processing the tree, upon
-                     --   encountering a @DDelay@ node we must drop any
-                     --   accumulated non-frozen transformation.
-                   | DPrim (Prim b v n)
-                   | DEmpty
-
--- | An 'RTree' is a compiled and optimized representation of a
---   'QDiagram', which can be used by backends.  They have the
---   following invariant which backends may rely upon:
---
---   * @RPrim@ nodes never have any children.
-type RTree b v n a = Tree (RNode b v n a)
-
-data RNode b v n a = RStyle (Style v n) -- ^ A style node.
-                   | RAnnot a
-                   | RPrim (Prim b v n) -- ^ A primitive.
-                   | REmpty
-
--- instances
-
-type instance V (RNode b v n a) = v
-type instance N (RNode b v n a) = n
-
-instance (Additive v, T.Traversable v, Floating n, Typeable n)
-    => Transformable (RNode b v n a) where
-  transform t n = case n of
-    RStyle s -> RStyle (transform t s)
-    RPrim p  -> RPrim  (transform t p)
-    a        -> a
-
-instance Typeable n => HasStyle (RNode b v n a) where
-  applyStyle = over _RStyle . applyStyle
-
--- prisms
-
--- | Prism onto a style of an 'RNode'.
-_RStyle :: Prism' (RNode b v n a) (Style v n)
-_RStyle = prism' RStyle $ \n -> case n of RStyle s -> Just s; _ -> Nothing
-
--- | Prism onto an annotation of an 'RNode'.
-_RAnnot :: Prism' (RNode b v n a) a
-_RAnnot = prism' RAnnot $ \n -> case n of RAnnot a -> Just a; _ -> Nothing
-
--- | Prism onto a 'Prim' of an 'RNode'.
-_RPrim :: Prism' (RNode b v n a) (Prim b v n)
-_RPrim = prism' RPrim $ \n -> case n of RPrim p -> Just p; _ -> Nothing
-
--- | Prism onto an empty 'RNode'.
-_REmpty :: Prism' (RNode b v n a) ()
-_REmpty = prism' (const REmpty) $ \n -> case n of REmpty -> Just (); _ -> Nothing
-
+------------------------------------------------------------------------
+-- Backends
+------------------------------------------------------------------------
 
 -- | Abstract diagrams are rendered to particular formats by
 --   /backends/.  Each backend/vector space combination must be an
