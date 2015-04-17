@@ -130,10 +130,7 @@ module Diagrams.Core.Types
        ) where
 
 import           Control.Arrow             (first, second, (***))
-import           Control.Lens              (Lens', Prism', Rewrapped,
-                                            Wrapped (..), iso, lens, over,
-                                            prism', view, (^.), _Wrapped,
-                                            _Wrapping)
+import           Control.Lens              hiding (transform)
 import           Control.Monad             (mplus)
 import           Data.List                 (isSuffixOf)
 import qualified Data.Map                  as M
@@ -174,9 +171,11 @@ class (Typeable n, RealFloat n) => TypeableFloat n
 instance (Typeable n, RealFloat n) => TypeableFloat n
 -- use class instead of type constraint so users don't need constraint kinds pragma
 
-------------------------------------------------------------
---  Diagrams  ----------------------------------------------
-------------------------------------------------------------
+------------------------------------------------------------------------
+-- Diagrams
+------------------------------------------------------------------------
+
+-- Anotations ----------------------------------------------------------
 
 -- | Monoidal annotations which travel up the diagram tree, /i.e./ which
 --   are aggregated from component diagrams to the whole:
@@ -226,6 +225,8 @@ transfToAnnot
 transfFromAnnot :: (Additive v, Num n) => DownAnnots v n -> Transformation v n
 transfFromAnnot = option mempty killR . fst
 
+-- Leafs ---------------------------------------------------------------
+
 -- | A leaf in a 'QDiagram' tree is either a 'Prim', or a \"delayed\"
 --   @QDiagram@ which expands to a real @QDiagram@ once it learns the
 --   \"final context\" in which it will be rendered.  For example, in
@@ -246,6 +247,8 @@ withQDiaLeaf :: (Prim b v n -> r)
             -> QDiaLeaf b v n m -> r
 withQDiaLeaf f _ (PrimLeaf p)      = f p
 withQDiaLeaf _ g (DelayedLeaf dgn) = g dgn
+
+-- Static annotation ---------------------------------------------------
 
 -- | Static annotations which can be placed at a particular node of a
 --   diagram tree.
@@ -272,6 +275,7 @@ opacityGroup, groupOpacity :: (Metric v, OrderedField n, Semigroup m)
 opacityGroup = applyAnnotation . OpacityGroup
 groupOpacity = applyAnnotation . OpacityGroup
 
+-- Static annotation ---------------------------------------------------
 
 -- | The fundamental diagram type.  The type variables are as follows:
 --
@@ -381,7 +385,7 @@ subMap = lens (unDelete . getU' . view _Wrapped') (flip setMap)
   where
     setMap :: (Metric v, Semigroup m, OrderedField n) =>
               SubMap b v n m -> QDiagram b v n m -> QDiagram b v n m
-    setMap m = over _Wrapped' ( D.applyUpre . inj . toDeletable $ m)
+    setMap m = over _Wrapped' (D.preapplyU . inj . toDeletable $ m)
 
 -- | Get a list of names of subdiagrams and their locations.
 names :: (Metric v, Semigroup m, OrderedField n)
@@ -396,7 +400,7 @@ names = (map . second . map) location . M.assocs . view (subMap . _Wrapped')
 nameSub :: (IsName nm , Metric v, OrderedField n, Semigroup m)
   => (QDiagram b v n m -> Subdiagram b v n m) -> nm -> QDiagram b v n m -> QDiagram b v n m
 nameSub s n d = d'
-  where d' = over _Wrapped' (D.applyUpre . inj . toDeletable $ fromNames [(n,s d')]) d
+  where d' = over _Wrapped' (D.preapplyU . inj . toDeletable $ fromNames [(n,s d')]) d
 
 -- | Lookup the most recent diagram associated with (some
 --   qualification of) the given name.
@@ -442,8 +446,8 @@ withNames ns f d = maybe id f ns' d
 --   longer visible to the outside.
 localize :: forall b v n m. (Metric v, OrderedField n, Semigroup m)
          => QDiagram b v n m -> QDiagram b v n m
-localize = over _Wrapped' ( D.applyUpre  (inj (deleteL :: Deletable (SubMap b v n m)))
-                   . D.applyUpost (inj (deleteR :: Deletable (SubMap b v n m)))
+localize = over _Wrapped' ( D.preapplyU  (inj (deleteL :: Deletable (SubMap b v n m)))
+                   . D.postapplyU (inj (deleteR :: Deletable (SubMap b v n m)))
                    )
 
 -- | Get the query function associated with a diagram.
@@ -506,7 +510,7 @@ mkQD' l e t n q
 --   diagrams when viewed by 4-dimensional beings.
 instance (Metric v, OrderedField n, Semigroup m)
   => Monoid (QDiagram b v n m) where
-  mempty  = QD D.empty
+  mempty  = QD mempty
   mappend = (<>)
 
 instance (Metric v, OrderedField n, Semigroup m)
@@ -556,7 +560,7 @@ instance Functor (QDiagram b v n) where
 
 instance (Metric v, OrderedField n, Semigroup m)
       => HasStyle (QDiagram b v n m) where
-  applyStyle = over _Wrapped' . D.applyD . inj
+  applyStyle = over _Wrapped' . D.down . inj
              . (inR :: Style v n -> Transformation v n :+: Style v n)
 
 ---- Juxtaposable
@@ -591,7 +595,7 @@ instance (Metric v, OrderedField n, Semigroup m)
 --   components appropriately.
 instance (OrderedField n, Metric v, Semigroup m)
       => Transformable (QDiagram b v n m) where
-  transform = over _Wrapped' . D.applyD . transfToAnnot
+  transform = over _Wrapped' . D.down . transfToAnnot
 
 ---- Qualifiable
 
@@ -599,7 +603,7 @@ instance (OrderedField n, Metric v, Semigroup m)
 --   now be referred to using the qualification prefix.
 instance (Metric v, OrderedField n, Semigroup m)
       => Qualifiable (QDiagram b v n m) where
-  (.>>) = over _Wrapped' . D.applyD . inj . toName
+  (.>>) = over _Wrapped' . D.down . inj . toName
 
 
 ------------------------------------------------------------
@@ -666,7 +670,7 @@ location (Subdiagram _ a) = transform (transfFromAnnot a) origin
 --   diagram.
 getSub :: (Metric v, OrderedField n, Semigroup m)
        => Subdiagram b v n m -> QDiagram b v n m
-getSub (Subdiagram d a) = over _Wrapped' (D.applyD a) d
+getSub (Subdiagram d a) = over _Wrapped' (D.down a) d
 
 -- | Extract the \"raw\" content of a subdiagram, by throwing away the
 --   context.
@@ -867,7 +871,7 @@ _REmpty = prism' (const REmpty) $ \n -> case n of REmpty -> Just (); _ -> Nothin
 --   instance of the 'Backend' class.
 --
 --   A minimal complete definition consists of 'Render', 'Result',
---   'Options', and 'renderRTree'. However, most backends will want to
+--   'Options', and 'renderDia'. However, most backends will want to
 --   implement 'adjustDia' as well; the default definition does
 --   nothing.  Some useful standard definitions are provided in the
 --   @Diagrams.TwoD.Adjust@ module from the @diagrams-lib@ package.
@@ -904,7 +908,7 @@ class Backend b v n where
   -- | Given some options, take a representation of a diagram as a
   --   tree and render it.  The 'RTree' has already been simplified
   --   and has all measurements converted to @Output@ units.
-  renderRTree :: b -> Options b v n -> RTree b v n Annotation -> Result b v n
+  renderDUAL :: Monoid' m => b -> Options b v n -> Transformation v n -> QDiagram b v n m -> Result b v n
 
   -- See Note [backend token]
 
@@ -1018,7 +1022,7 @@ instance Backend NullBackend v n where
   type Result NullBackend v n = ()
   data Options NullBackend v n
 
-  renderRTree _ _ _ = ()
+  renderDUAL _ _ _ _ = ()
 
 -- | The Renderable type class connects backends to primitives which
 --   they know how to render.
