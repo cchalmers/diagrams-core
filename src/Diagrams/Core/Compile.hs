@@ -36,7 +36,8 @@ import           Data.Tree.DUAL            (foldDUAL)
 import           Data.Typeable
 import qualified Data.Foldable as F
 
-import           Diagrams.Core.Envelope    (OrderedField, diameter)
+import           Diagrams.Core.Envelope    (OrderedField, size)
+import           Diagrams.Core.Style
 import           Diagrams.Core.Transform
 import           Diagrams.Core.Types
 import           Diagrams.Core.Style
