@@ -20,8 +20,10 @@ module Diagrams.Core.Query
   ) where
 
 import           Control.Applicative
-import           Control.Lens            (Rewrapped, Wrapped (..), iso)
+import           Control.Lens
 import           Data.Semigroup
+import           Data.Distributive
+import           Data.Functor.Rep
 
 import           Linear.Affine
 import           Linear.Vector
@@ -42,6 +44,18 @@ import           Diagrams.Core.V
 --   the graphics-drawingcombinators package, <http://hackage.haskell.org/package/graphics-drawingcombinators>.
 newtype Query v n m = Query { runQuery :: Point v n -> m }
   deriving (Functor, Applicative, Semigroup, Monoid)
+
+instance Distributive (Query v n) where
+  distribute a = Query $ \p -> fmap (\(Query f) -> f p) a
+
+instance Representable (Query v n) where
+  type Rep (Query v n) = Point v n
+  tabulate = Query
+  index    = runQuery
+
+instance Functor v => Profunctor (Query v) where
+  lmap f (Query m) = Query $ \p -> m (fmap f p)
+  rmap = fmap
 
 instance Wrapped (Query v n m) where
   type Unwrapped (Query v n m) = Point v n -> m
