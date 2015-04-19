@@ -17,6 +17,7 @@
 
 module Diagrams.Core.Query
   ( Query (..)
+  , queryPoint
   ) where
 
 import           Control.Applicative
@@ -46,7 +47,7 @@ newtype Query v n m = Query { runQuery :: Point v n -> m }
   deriving (Functor, Applicative, Semigroup, Monoid)
 
 instance Distributive (Query v n) where
-  distribute a = Query $ \p -> fmap (\(Query f) -> f p) a
+  distribute a = Query $ \p -> fmap (\(Query q) -> q p) a
 
 instance Representable (Query v n) where
   type Rep (Query v n) = Point v n
@@ -54,8 +55,12 @@ instance Representable (Query v n) where
   index    = runQuery
 
 instance Functor v => Profunctor (Query v) where
-  lmap f (Query m) = Query $ \p -> m (fmap f p)
+  lmap f (Query q) = Query $ \p -> q (fmap f p)
   rmap = fmap
+
+-- | Setter over the input point of a query.
+queryPoint :: Setter (Query v' n' m) (Query v n m) (Point v n) (Point v' n')
+queryPoint = sets $ \f (Query q) -> Query $ q . f
 
 instance Wrapped (Query v n m) where
   type Unwrapped (Query v n m) = Point v n -> m
@@ -67,7 +72,7 @@ type instance V (Query v n m) = v
 type instance N (Query v n m) = n
 
 instance (Additive v, Num n) => HasOrigin (Query v n m) where
-  moveOriginTo (P u) (Query f) = Query $ \p -> f (p .+^ u)
+  moveOriginTo (P u) = queryPoint %~ (.+^ u)
 
 instance (Additive v, Num n) => Transformable (Query v n m) where
-  transform t (Query f) = Query $ f . papply (inv t)
+  transform t = queryPoint %~ papply (inv t)
