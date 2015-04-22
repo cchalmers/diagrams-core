@@ -44,7 +44,7 @@ import           Diagrams.Core.V
 --   The idea for annotating diagrams with monoidal queries came from
 --   the graphics-drawingcombinators package, <http://hackage.haskell.org/package/graphics-drawingcombinators>.
 newtype Query v n m = Query { runQuery :: Point v n -> m }
-  deriving (Functor, Applicative, Semigroup, Monoid)
+  deriving (Functor, Applicative, Monad, Semigroup, Monoid)
 
 instance Distributive (Query v n) where
   distribute a = Query $ \p -> fmap (\(Query q) -> q p) a

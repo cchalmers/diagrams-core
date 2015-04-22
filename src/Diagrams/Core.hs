@@ -140,12 +140,6 @@ module Diagrams.Core
 
          -- ** Subdiagram maps
 
-       , SubMap(..)
-       , fromNames
-       , rememberAs
-
-       , lookupSub
-
          -- * Attributes and styles
 
        , AttributeClass
@@ -194,29 +188,13 @@ module Diagrams.Core
          -- * Diagrams
 
        , QDiagram, Diagram, mkQD, pointDiagram
-       , envelope, trace, subMap, names, query, sample
-       , value, resetValue, clearValue
-
-       , nameSub
-       , withName
-       , withNameAll
-       , withNames
-       , localize
+       , envelope, trace, query
 
        , href
        , opacityGroup
        , groupOpacity
 
        , setEnvelope, setTrace
-
-       , atop
-
-         -- ** Subdiagrams
-
-       , Subdiagram(..), mkSubdiagram
-       , getSub, rawSub
-       , location
-       , subPoint
 
          -- ** Measurements
 

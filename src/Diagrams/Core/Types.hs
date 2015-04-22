@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP                        #-}
+-- {-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE EmptyDataDecls             #-}
@@ -13,6 +13,10 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE ViewPatterns               #-}
+{-# LANGUAGE MultiWayIf                 #-}
+{-# LANGUAGE RankNTypes                 #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans       #-}
 -- We have some orphan Action instances here, but since Action is a multi-param
@@ -41,93 +45,78 @@
    in this module cyclically depends on everything else.
 -}
 
-module Diagrams.Core.Types
-       (
-         -- * Diagrams
+module Diagrams.Core.Types where
+  -- (
+  --   -- * Annotations
 
-         -- ** Annotations
+  --   -- ** Static annotations
+  --   Annotation(..)
+  -- , applyAnnotation, href, opacityGroup, groupOpacity
 
-         -- *** Static annotations
-         Annotation(Href, OpacityGroup)
-       , applyAnnotation, href, opacityGroup, groupOpacity
+  --   -- ** Up annotations
+  -- , UpAnnots
+  -- , upAnnots
+  -- , envelope, trace, refmap, query
 
-         -- *** Dynamic (monoidal) annotations
-       , UpAnnots, DownAnnots, downT, transfFromAnnot
+  --  -- ** Down annotations
+  -- , DownAnnots, downT, transfFromAnnot
 
-         -- ** Basic type definitions
-       , QDiaLeaf(..)
-       , QDiagram(..)
-       , Diagram
+  --   -- ** Basic type definitions
+  -- , QDiaLeaf(..)
+  -- , QDiagram(..)
+  -- , Diagram
 
-         -- * Operations on diagrams
-         -- ** Creating diagrams
-       , mkQD, mkQD', pointDiagram
+  --   -- ** Creating diagrams
+  -- , mkQD, mkQD', pointDiagram
 
-         -- ** Extracting information
-       , envelope, trace, subMap, names, query, sample
-       , value, resetValue, clearValue
+  --   -- *** Other
+  -- , setEnvelope
+  -- , setTrace
 
-         -- ** Combining diagrams
+  --   -- * Subdiagrams
 
-         -- | For many more ways of combining diagrams, see
-         -- "Diagrams.Combinators" from the diagrams-lib package.
+  -- -- , Subdiagram(..), mkSubdiagram
+  -- -- , getSub, rawSub
+  -- -- , location
+  -- -- , subPoint
 
-       , atop
+  --   -- * Subdiagram maps
 
-         -- ** Modifying diagrams
-         -- *** Names
-       , nameSub
-       , lookupName
-       , withName
-       , withNameAll
-       , withNames
-       , localize
+  -- , RefMap(..)
 
-         -- *** Other
-       , setEnvelope
-       , setTrace
+  --   -- * Primtives
+  --   -- $prim
 
-         -- * Subdiagrams
+  -- , Prim(..)
+  -- , _Prim
 
-       , Subdiagram(..), mkSubdiagram
-       , getSub, rawSub
-       , location
-       , subPoint
+  --   -- * Backends
 
-         -- * Subdiagram maps
+  -- , Backend(..)
 
-       , SubMap(..)
+  --   -- ** Null backend
 
-       , fromNames, rememberAs, lookupSub
+  -- , NullBackend, D
 
-         -- * Primtives
-         -- $prim
+  --   -- ** Number classes
+  -- , TypeableFloat
 
-       , Prim(..)
-       , _Prim
+  --   -- * Renderable
 
-         -- * Backends
+  -- , Renderable(..)
 
-       , Backend(..)
-
-         -- ** Null backend
-
-       , NullBackend, D
-
-         -- ** Number classes
-       , TypeableFloat
-
-         -- * Renderable
-
-       , Renderable(..)
-
-       ) where
+ -- ) where
 
 import           Control.Arrow             (second, (***))
 import           Control.Lens              hiding (transform)
 import           Control.Monad             (mplus)
 import           Data.List                 (isSuffixOf)
 import qualified Data.Map                  as M
+import qualified Data.Set                  as Set
+import qualified Data.Sequence             as Seq
+import           Data.Sequence             (ViewL (..), viewl)
+import Data.Bool (bool)
+import Data.Function (on)
 import           Data.Maybe                (fromMaybe, listToMaybe)
 import           Data.Semigroup
 import qualified Data.Traversable          as T
@@ -136,7 +125,7 @@ import           Data.Typeable
 import           Data.Monoid.Action
 import           Data.Monoid.Coproduct
 import           Data.Monoid.WithSemigroup
-import qualified Data.Tree.DUAL            as D
+import           Data.Tree.DUAL.Internal
 
 import           Diagrams.Core.Envelope
 import           Diagrams.Core.HasOrigin
@@ -163,10 +152,10 @@ instance (Typeable n, RealFloat n) => TypeableFloat n
 -- use class instead of type constraint so users don't need constraint kinds pragma
 
 ------------------------------------------------------------------------
--- Diagrams
+-- Annotations
 ------------------------------------------------------------------------
 
--- Anotations ----------------------------------------------------------
+-- Up annotations ------------------------------------------------------
 
 -- | Monoidal annotations which travel up the diagram tree, /i.e./ which
 --   are aggregated from component diagrams to the whole:
@@ -183,24 +172,44 @@ instance (Typeable n, RealFloat n) => TypeableFloat n
 --   * name/subdiagram associations (see "Diagrams.Core.Names")
 --
 --   * query functions (see "Diagrams.Core.Query")
-newtype UpAnnots b v n m = UpAnnots (Envelope v n, Trace v n, SubMap b v n m, Query v n m)
+newtype UpAnnots v n m = UpAnnots (Envelope v n, Trace v n, RefMap v n m, Query v n m)
   deriving (Typeable, Semigroup, Monoid, Functor)
 
-type instance V (UpAnnots b v n m) = v
-type instance N (UpAnnots b v n m) = n
+instance Show (UpAnnots v n m) where
+  show _ = "<UpAnnots>"
 
-instance r ~ UpAnnots b' v' n' m' => Rewrapped (UpAnnots b v n m) r
-instance Wrapped (UpAnnots b v n m) where
-  type Unwrapped (UpAnnots b v n m) = (Envelope v n, Trace v n, SubMap b v n m, Query v n m)
+
+type instance V (UpAnnots v n m) = v
+type instance N (UpAnnots v n m) = n
+
+instance r ~ UpAnnots v' n' m' => Rewrapped (UpAnnots v n m) r
+instance Wrapped (UpAnnots v n m) where
+  type Unwrapped (UpAnnots v n m) = (Envelope v n, Trace v n, RefMap v n m, Query v n m)
   _Wrapped' = iso (\(UpAnnots a) -> a) UpAnnots
 
-instance (Metric v, OrderedField n) => Transformable (UpAnnots b v n m) where
+instance (Metric v, OrderedField n) => Transformable (UpAnnots v n m) where
   transform = over _Wrapped . transform
 
--- | Affine traversal over the top level upwards annotations. Does
---   nothing for empty diagram.
-upAnnots :: Traversal' (QDiagram b v n m) (UpAnnots b v n m)
-upAnnots = _Wrapped' . D._u
+-- | Throw away all references.
+instance (OrderedField n) => Applicative (UpAnnots v n) where
+  pure q = UpAnnots (Envelope mempty, Trace $ \_ _ -> mempty, RefMap mempty, pure q)
+  UpAnnots (e1, t1, _, q1) <*> UpAnnots (e2, t2, _, q2)
+    = UpAnnots (e1 <> e2, t1 <> t2, RefMap mempty, q1 <*> q2)
+
+-- | Makes 0 sense.
+instance (Additive v, OrderedField n) => Monad (UpAnnots v n) where
+  return = pure
+  UpAnnots (e1, t1, _, q1) >>= f
+    = UpAnnots (e1 <> e2, t1 <> t2, RefMap mempty, q2)
+    where
+      UpAnnots (e2, t2, _, q2) = f $ runQuery q1 origin
+
+
+-- | Internal affine traversal over the top level upwards annotations.
+--   Changing the 'RefMap' of an up can cause problems with references.
+--   This is exported from 'Diagrams.Core.Types' for debugging purposes.
+upAnnots :: Traversal' (QDiagram b v n m) (UpAnnots v n m)
+upAnnots = _Wrapped' . _u
 
 -- | Traversal over the envelope of a diagram. Does nothing for the
 --   empty diagram.
@@ -212,27 +221,29 @@ envelope = upAnnots . _Wrapped' . _1
 trace :: Traversal' (QDiagram b v n m) (Trace v n)
 trace = upAnnots . _Wrapped' . _2
 
--- | Traversal over the 'Subdiagram' mapping of a diagram. Does nothing
---   for the empty diagram.
-subMap :: Traversal' (QDiagram b v n m) (SubMap b v n m)
-subMap = upAnnots . _Wrapped' . _3
+-- | Internal traversal over the reference map of a diagram.
+--   Manually editing a reference map will likely end up in an
+--   mal-formed reference between diagram. This is exported from
+--   'Diagrams.Core.Types' for debugging purposes.
+refmap :: Traversal' (QDiagram b v n m) (RefMap v n m)
+refmap = upAnnots . _Wrapped' . _3
 
 -- | Traversal over the query of a diagram. Does nothing for the
 --   empty diagram.
 query :: Traversal' (QDiagram b v n m) (Query v n m)
 query = upAnnots . _Wrapped' . _4
 
--- are these still needed?
+-- todo: set on empty diagram
 
 -- | Replace the envelope of a diagram.
-setEnvelope :: (OrderedField n, Metric v, Monoid' m)
-            => Envelope v n -> QDiagram b v n m -> QDiagram b v n m
+setEnvelope :: Envelope v n -> QDiagram b v n m -> QDiagram b v n m
 setEnvelope = set envelope
 
 -- | Replace the envelope of a diagram.
-setTrace :: (OrderedField n, Metric v, Monoid' m)
-         => Trace v n -> QDiagram b v n m -> QDiagram b v n m
+setTrace :: Trace v n -> QDiagram b v n m -> QDiagram b v n m
 setTrace = set trace
+
+-- Down annotations ----------------------------------------------------
 
 -- | Monoidal annotations which travel down the diagram tree,
 --   /i.e./ which accumulate along each path to a leaf (and which can
@@ -244,18 +255,84 @@ type DownAnnots v n = Transformation v n :+: Style v n
   -- Note that we  put the transformations and styles together using a
   -- coproduct because the transformations can act on the styles.
 
--- | Make a downwards annotation from a transform.
 downT :: Transformation v n -> DownAnnots v n
 downT = inL
 
--- | Make a downwards annotation from a style.
 downSty :: Style v n -> DownAnnots v n
 downSty = inR
+
+instance Show (Transformation v n) where
+  show _ = "<Transform>"
 
 -- | Extract the (total) transformation from a downwards annotation
 --   value.
 transfFromAnnot :: (Additive v, Num n) => DownAnnots v n -> Transformation v n
 transfFromAnnot = killR
+
+-- Static annotation ---------------------------------------------------
+
+-- | Static annotations which can be placed at a particular node of a
+--   diagram tree.
+data Annotation (v :: * -> *) n
+  = Href String    -- ^ Hyperlink
+  | OpacityGroup Double
+  -- | Fading (QDiagram b v n Any)
+  deriving Show
+
+type instance V (Annotation v n) = v
+type instance N (Annotation v n) = n
+
+instance Transformable (Annotation v n) where
+  transform _ = id
+
+instance HasStyle (Annotation v n) where
+  applyStyle _ = id
+
+-- | Apply a static annotation at the root of a diagram.
+applyAnnotation :: Annotation v n -> QDiagram b v n m -> QDiagram b v n m
+applyAnnotation an (QD dt) = QD (annot an dt)
+
+-- | Make a diagram into a hyperlink.  Note that only some backends
+--   will honor hyperlink annotations.
+href :: String -> QDiagram b v n m -> QDiagram b v n m
+href = applyAnnotation . Href
+
+-- | Change the transparency of a 'Diagram' as a group.
+opacityGroup, groupOpacity :: Double -> QDiagram b v n m -> QDiagram b v n m
+opacityGroup = applyAnnotation . OpacityGroup
+groupOpacity = applyAnnotation . OpacityGroup
+
+------------------------------------------------------------------------
+-- Primitives
+------------------------------------------------------------------------
+
+-- $prim
+-- Ultimately, every diagram is essentially a tree whose leaves are
+-- /primitives/, basic building blocks which can be rendered by
+-- backends. However, not every backend must be able to render every
+-- type of primitive; the collection of primitives a given backend knows
+-- how to render is determined by instances of 'Renderable'.
+
+-- | A value of type @Prim b v n@ is an opaque (existentially quantified)
+--   primitive which backend @b@ knows how to render in vector space @v@.
+data Prim b v n where
+  Prim :: (Transformable p, Typeable p, Renderable p b) => p -> Prim b (V p) (N p)
+
+_Prim :: (Transformable p, Typeable p, Renderable p b) => Prism' (Prim b (V p) (N p)) p
+_Prim = prism' Prim (\(Prim p) -> cast p)
+
+type instance V (Prim b v n) = v
+type instance N (Prim b v n) = n
+
+-- | The 'Transformable' instance for 'Prim' just pushes calls to
+--   'transform' down through the 'Prim' constructor.
+instance Transformable (Prim b v n) where
+  transform t (Prim p) = Prim (transform t p)
+
+-- | The 'Renderable' instance for 'Prim' just pushes calls to
+--   'render' down through the 'Prim' constructor.
+instance Renderable (Prim b v n) b where
+  render b (Prim p) = render b p
 
 -- Leafs ---------------------------------------------------------------
 
@@ -274,34 +351,229 @@ data QDiaLeaf b v n m
     --   be applied by the context).
   deriving Functor
 
--- Static annotation ---------------------------------------------------
+instance Show (QDiaLeaf b v n m) where
+  show PrimLeaf {} = "PrimLeaf"
+  show _           = "DelayedLeaf"
 
--- | Static annotations which can be placed at a particular node of a
---   diagram tree.
-data Annotation
-  = Href String    -- ^ Hyperlink
-  | OpacityGroup Double
+------------------------------------------------------------------------
+-- Referencing subdiagrams
+------------------------------------------------------------------------
+
+-- | Tape describing how to get back a diagram. The list is the elements
+--   of the Concat branches of the internal DALTree. The number is the
+--   number of Annotation elements expected.
+data Tape = Tape [Int] !Int
+  deriving (Show, Ord, Eq)
+
+-- | A 'Subref' is an internal reference to a named diagram embedded
+--   within another diagram.
+data Subref v n m = Subref (UpAnnots v n m) Tape
+  deriving (Show, Functor)
+
+-- | @updateTape a b@ updates tape @b@ for changes made to the tree from
+--   traversing down to tape @a@.
+updateTape :: Tape -> Tape -> Tape
+updateTape (Tape xs _) (Tape ys a) = Tape (go xs ys) a
+  where
+    go []     js  = js
+    go (i:is) jss@(j:js)
+      -- Alter the tape according to how the branch was split. When i/=0
+      -- the branch is split in three (with i in the middle). When i=0,
+      -- the branch is split in two (with i at the start).
+      | i <  j    = bool 1 2 (i==0) : (j - i - 1) : js
+      | i == j    = bool 0 1 (i==0) : (j - i) : go is js
+      | otherwise = 0 : jss
+
+-- If they point to the same thing, they're the same.
+instance Eq (Subref v n m) where
+  (==) = (==) `on` view reftape
+
+instance Ord (Subref v n m) where
+  compare = compare `on` view reftape
+
+reftape :: Lens' (Subref v n m) Tape
+reftape f (Subref u t) = f t <&> \t' -> Subref u t'
+
+refpath :: Lens' (Subref v n m) [Int]
+refpath = reftape . x
+  where x f (Tape p i) = f p <&> \p' -> Tape p' i
+
+subup :: Lens' (Subref v n m) (UpAnnots v n m)
+subup f (Subref u t) = f u <&> \u' -> Subref u' t
+
+-- Make a reference to the top level a diagram. When two diagrams are
+-- combined or a diagram is traversed, this reference gets updated
+-- accordingly.
+subref :: (Ord n, Monoid m) => QDiagram b v n m -> Subref v n m
+subref qd = Subref (qd ^. upAnnots) (Tape [] 0)
+  where
+    -- The number of annotations before a Concat or Leaf.
+    i = case qd ^? dal of
+          Just t  -> go 0 t
+          Nothing -> -1
+    go i = \case
+      Down _ t  -> go i t
+      Annot _ t -> go (i+1) t
+      _         -> i
+
+-- TEMPOARY
+
+dal :: Traversal' (QDiagram b v n m) (DALTree (DownAnnots v n) (Annotation v n) (QDiaLeaf b v n m))
+dal f (QD (DUALTree u d)) = QD . DUALTree u <$> f d
+dal _ _                   = pure (QD EmptyDUAL)
+
+-- | Give the current diagram a name that can be referenced with
+--   'named'.
+name :: (Ord n, Monoid m, IsName nm) => nm -> QDiagram b v n m -> QDiagram b v n m
+name (toName -> Name nms) d = over (refmap . _Wrapped') addNames d
+  where
+    addNames m    = foldl addAName m nms
+    addAName m nm = M.insertWith (<>) nm (Set.singleton $ subref d) m
+
+named :: (Metric v, OrderedField n, Semigroup m)
+      => IsName nm => nm -> Traversal' (QDiagram b v n m) (QDiagram b v n m)
+named nm f d =
+  case indexRef (toName nm) (d^.refmap) ^? _Wrapped . _head of
+    Just (Subref u t) -> tapeDiaTraverse u t f d
+    Nothing           -> pure d
+
+-- -- | Push @d@ annotations down to the selected leaf. None of the old @d@
+-- --   annotations be above will remain. Static @a@ annotations are acted
+-- --   on by the accumilated @d@ annotation when it's reached.
+-- tapeTraverse :: (Applicative f, Monoid d)
+--              => Tape -> (d -> DALTree d a l -> f (DALTree d a l)) -> DALTree d a l
+--              -> f (DALTree d a l)
+-- tapeTraverse (Tape t _) f = go mempty t where
+--   -- The result is a little funny because it returns any a annotations
+--   -- present, even though they could have been made after the tape was
+--   -- formed. Need to think about this.
+--   go d []         = f d
+--   -- Search for the next Concat and get element i from it.
+--   go d iss@(i:is) = \case
+--     Down d' t -> go (d `mappend` d') iss t
+--     Annot a t -> Annot a <$> go d iss t
+--     -- Everything on the left and right of the target receives the d
+--     -- annotation accumulated so far. The target has its d annotation
+--     -- pushed further down.
+--     Concat ts
+--       | (sL, sR') <- Seq.splitAt i ts
+--       , t :< sR   <- viewl sR' ->
+--           go d is t <&> \t' -> list $
+--             if | null sL   -> [t', dw sR]
+--                | null sR   -> [dw sL, t']
+--                | otherwise -> [dw sL, t', dw sR]
+--       where dw = Down d . Concat
+--     -- The search has failed. We keep any accumulated down annotations.
+--     -- This isn't a great solution but generally speaking the tape given
+--     -- should point to something that exists.
+--     l             -> pure (Down d l)
+--     where list a = Concat (Seq.fromList a)
+
+-- | Push @d@ annotations down to the selected leaf. None of the old @d@
+--   annotations be above will remain. Static @a@ annotations are acted
+--   on by the accumilated @d@ annotation when it's reached.
+tapeTraverse :: forall f d u a l. (Action d u, Applicative f, Monoid' d, Semigroup u)
+             => u
+             -> Tape
+             -> (d -> DUALTree d u a l -> f (DUALTree d u a l))
+             -> DUALTree d u a l
+             -> f (DUALTree d u a l)
+tapeTraverse u (Tape p _) f EmptyDUAL       = pure EmptyDUAL
+tapeTraverse u (Tape p _) f (DUALTree u0 t) = unAnnots <>~ u0 $ go mempty p t where
+  -- The result is a little funny because it returns any a annotations
+  -- present, even though they could have been made after the tape was
+  -- formed. Need to think about this.
+  go :: d -> [Int] -> DALTree d a l -> f (DUALTree d u a l)
+  go d []         = f d . DUALTree u
+  -- Search for the next Concat and get element i from it.
+  go d iss@(i:is) = \case
+      Down d' t -> go (d `mappend` d') iss t
+      Annot a t -> annot a <$> go d iss t
+      -- Everything on the left and right of the target receives the d
+      -- annotation accumulated so far. The target has its d annotation
+      -- pushed further down.
+      Concat ts
+        | (sL, sR') <- Seq.splitAt i ts
+        , t :< sR   <- viewl sR' ->
+            go d is t <&> \(DUALTree u' t') -> DUALTree u' $ list $
+              if | null sL   -> [t', dw sR]
+                 | null sR   -> [dw sL, t']
+                 | otherwise -> [dw sL, t', dw sR]
+            where dw = Down d . Concat
+      -- The search has failed. We keep any accumulated down annotations.
+      -- This isn't a great solution but generally speaking the tape given
+      -- should point to something that exists.
+      l             -> pure (down d $ DUALTree u l)
+      where list a = Concat (Seq.fromList a)
+            unU (DUALTree _ x) = x
+
+
+tapeDiaTraverse :: (Applicative f, Metric v, OrderedField n, Semigroup m)
+                => UpAnnots v n m
+                -> Tape
+                -> (QDiagram b v n m -> f (QDiagram b v n m))
+                -> QDiagram b v n m
+                -> f (QDiagram b v n m)
+tapeDiaTraverse u t f dia = QD <$> fdual
+  where
+    fdual    = tapeTraverse u t g (dia ^. _Wrapped)
+    g d dual = view _Wrapped <$> f (QD . down d $ dual)
+
+-- Reference maps ------------------------------------------------------
+
+-- | A 'RefMap' in an internal mapping of 'AName's to a set of 'Subref's.
+
+-- | A 'RefMap' is a map associating names to subdiagrams. There can
+--   be multiple associations for any given name, but each name can
+--   point to a subdiagram once (enforced by the set).
+newtype RefMap v n m = RefMap (M.Map AName (Set.Set (Subref v n m)))
   deriving Show
 
--- | Apply a static annotation at the root of a diagram.
-applyAnnotation
-  :: (Metric v, OrderedField n, Semigroup m)
-  => Annotation -> QDiagram b v n m -> QDiagram b v n m
-applyAnnotation an (QD dt) = QD (D.annot an dt)
+type instance V (RefMap v n m) = v
+type instance N (RefMap v n m) = n
 
--- | Make a diagram into a hyperlink.  Note that only some backends
---   will honor hyperlink annotations.
-href :: (Metric v, OrderedField n, Semigroup m)
-  => String -> QDiagram b v n m -> QDiagram b v n m
-href = applyAnnotation . Href
+instance Rewrapped (RefMap v n m) (RefMap v' n' m')
+instance Wrapped (RefMap v n m) where
+  type Unwrapped (RefMap v n m) = M.Map AName (Set.Set (Subref v n m))
+  _Wrapped' = iso (\(RefMap m) -> m) RefMap
 
--- | Change the transparency of a 'Diagram' as a group.
-opacityGroup, groupOpacity :: (Metric v, OrderedField n, Semigroup m)
-  => Double -> QDiagram b v n m -> QDiagram b v n m
-opacityGroup = applyAnnotation . OpacityGroup
-groupOpacity = applyAnnotation . OpacityGroup
+instance Functor (RefMap v n) where
+  fmap = over (_Wrapped . mapped . sets Set.map . mapped)
 
--- QDiagram ------------------------------------------------------------
+indexRef :: Name -> RefMap v n m -> Set.Set (Subref v n m)
+indexRef (Name nms) (RefMap m) = foldl1 Set.intersection matches
+  where matches = m ^.. foldMap ix nms
+
+-- Traversal over all tape paths of up annotations. This is only a valid
+-- traversal if you don't make two paths in the same RefMap Set overlap.
+paths :: Traversal' (UpAnnots v n m) [Int]
+paths = _Wrapped' . _3 . _Wrapped' . each
+      . _Wrapping Set.fromList . each . refpath
+
+instance Semigroup (RefMap v n m) where
+  RefMap s1 <> RefMap s2 = RefMap $ M.unionWith (<>) s1 s2
+
+-- | 'RefMap's form a monoid with the empty map as the identity, and
+--   map union as the binary operation.  No information is ever lost:
+--   if two maps have the same name in their domain, the resulting map
+--   will associate that name to the concatenation of the information
+--   associated with that name.
+instance Monoid (RefMap v n m) where
+  mempty  = RefMap mempty
+  mappend = (<>)
+
+type instance V (RefMap v n m) = v
+type instance N (RefMap v n m) = n
+
+instance (OrderedField n, Metric v) => HasOrigin (RefMap v n m) where
+  moveOriginTo _ = id
+
+instance (Metric v, Floating n) => Transformable (RefMap v n m) where
+  transform _ = id
+
+------------------------------------------------------------------------
+-- QDiagram
+------------------------------------------------------------------------
 
 -- | The fundamental diagram type.  The type variables are as follows:
 --
@@ -334,26 +606,25 @@ groupOpacity = applyAnnotation . OpacityGroup
 --   is not really a very good name, but it's probably not worth
 --   changing it at this point.
 newtype QDiagram b v n m
-  = QD (D.DUALTree (DownAnnots v n) (UpAnnots b v n m) Annotation (QDiaLeaf b v n m))
-#if __GLASGOW_HASKELL__ >= 707
-  deriving Typeable
-#else
+  = QD (DUALTree (DownAnnots v n) (UpAnnots v n m) (Annotation v n) (QDiaLeaf b v n m))
+-- #if __GLASGOW_HASKELL__ >= 707
+  deriving (Show, Typeable)
+-- #else
 
-instance forall b v. (Typeable b, Typeable1 v) => Typeable2 (QDiagram b v) where
-  typeOf2 _ = mkTyConApp (mkTyCon3 "diagrams-core" "Diagrams.Core.Types" "QDiagram") [] `mkAppTy`
-              typeOf (undefined :: b)                                                   `mkAppTy`
-              typeOf1 (undefined :: v n)
-#endif
-
-instance Wrapped (QDiagram b v n m) where
-  type Unwrapped (QDiagram b v n m) =
-        D.DUALTree (DownAnnots v n) (UpAnnots b v n m) Annotation (QDiaLeaf b v n m)
-  _Wrapped' = iso (\(QD d) -> d) QD
-
-instance Rewrapped (QDiagram b v n m) (QDiagram b' v' n' m')
+-- instance forall b v. (Typeable b, Typeable1 v) => Typeable2 (QDiagram b v) where
+--   typeOf2 _ = mkTyConApp (mkTyCon3 "diagrams-core" "Diagrams.Core.Types" "QDiagram") [] `mkAppTy`
+--               typeOf (undefined :: b)                                                   `mkAppTy`
+--               typeOf1 (undefined :: v n)
+-- #endif
 
 type instance V (QDiagram b v n m) = v
 type instance N (QDiagram b v n m) = n
+
+instance Rewrapped (QDiagram b v n m) (QDiagram b' v' n' m')
+instance Wrapped (QDiagram b v n m) where
+  type Unwrapped (QDiagram b v n m) =
+    DUALTree (DownAnnots v n) (UpAnnots v n m) (Annotation v n) (QDiaLeaf b v n m)
+  _Wrapped' = iso (\(QD d) -> d) QD
 
 -- | @Diagram b@ is a synonym for @'QDiagram' b (V b) (N b) 'Any'@.  That is,
 --   the default sort of diagram is one where querying at a point
@@ -363,126 +634,50 @@ type instance N (QDiagram b v n m) = n
 --   the 'value' function.
 type Diagram b = QDiagram b (V b) (N b) Any
 
+-- Construction --------------------------------------------------------
+
 -- | Create a \"point diagram\", which has no content, no trace, an
 --   empty query, and a point envelope.
 pointDiagram :: (Metric v, OrderedField n, Monoid m) => Point v n -> QDiagram b v n m
-pointDiagram p = QD $ D.leafU (mempty & _Wrapped . _1 .~ pointEnvelope p)
-
--- Names ---------------------------------------------------------------
-
--- | Get a list of names of subdiagrams and their locations.
-names :: (Metric v, Semigroup m, OrderedField n)
-      => QDiagram b v n m -> [(Name, [Point v n])]
-names = (map . second . map) location . M.assocs . view (subMap . _Wrapped')
-
--- | Attach an atomic name to a certain subdiagram, computed from the
---   given diagram /with the mapping from name to subdiagram
---   included/.  The upshot of this knot-tying is that if @d' = d #
---   named x@, then @lookupName x d' == Just d'@ (instead of @Just
---   d@).
-nameSub :: (IsName nm , Metric v, OrderedField n, Semigroup m)
-  => (QDiagram b v n m -> Subdiagram b v n m) -> nm -> QDiagram b v n m -> QDiagram b v n m
-nameSub s n d = d'
-  where d' = over subMap (fromNames [(n,s d')] <>) d
-
--- | Lookup the most recent diagram associated with (some
---   qualification of) the given name.
-lookupName :: (IsName nm, Metric v, Semigroup m, OrderedField n)
-           => nm -> QDiagram b v n m -> Maybe (Subdiagram b v n m)
-lookupName n d = lookupSub (toName n) (d^.subMap) >>= listToMaybe
-
--- | Given a name and a diagram transformation indexed by a
---   subdiagram, perform the transformation using the most recent
---   subdiagram associated with (some qualification of) the name,
---   or perform the identity transformation if the name does not exist.
-withName :: (IsName nm, Metric v
-            , Semigroup m, OrderedField n)
-         => nm -> (Subdiagram b v n m -> QDiagram b v n m -> QDiagram b v n m)
-         -> QDiagram b v n m -> QDiagram b v n m
-withName n f d = maybe id f (lookupName n d) d
-
--- | Given a name and a diagram transformation indexed by a list of
---   subdiagrams, perform the transformation using the
---   collection of all such subdiagrams associated with (some
---   qualification of) the given name.
-withNameAll :: (IsName nm, Metric v
-               , Semigroup m, OrderedField n)
-            => nm -> ([Subdiagram b v n m] -> QDiagram b v n m -> QDiagram b v n m)
-            -> QDiagram b v n m -> QDiagram b v n m
-withNameAll n f d = f (fromMaybe [] (lookupSub (toName n) (d^.subMap))) d
-
--- | Given a list of names and a diagram transformation indexed by a
---   list of subdiagrams, perform the transformation using the
---   list of most recent subdiagrams associated with (some qualification
---   of) each name.  Do nothing (the identity transformation) if any
---   of the names do not exist.
-withNames :: (IsName nm, Metric v, Semigroup m, OrderedField n)
-          => [nm] -> ([Subdiagram b v n m] -> QDiagram b v n m -> QDiagram b v n m)
-          -> QDiagram b v n m -> QDiagram b v n m
-withNames ns f d = maybe id f ns' d
-  where
-    nd = d^.subMap
-    ns' = T.sequence (map ((listToMaybe=<<) . ($ nd) . lookupSub . toName) ns)
-
--- | \"Localize\" a diagram by hiding all the names, so they are no
---   longer visible to the outside.
-localize :: (Metric v, OrderedField n, Semigroup m)
-         => QDiagram b v n m -> QDiagram b v n m
-localize = set subMap mempty
-
--- | Sample a diagram's query function at a given point.
-sample :: Monoid m => QDiagram b v n m -> Point v n -> m
-sample = runQuery . view query
-
--- | Set the query value for 'True' points in a diagram (/i.e./ points
---   \"inside\" the diagram); 'False' points will be set to 'mempty'.
-value :: Monoid m => m -> QDiagram b v n Any -> QDiagram b v n m
-value m = fmap fromAny
-  where fromAny (Any True)  = m
-        fromAny (Any False) = mempty
-
--- | Reset the query values of a diagram to @True@/@False@: any values
---   equal to 'mempty' are set to 'False'; any other values are set to
---   'True'.
-resetValue :: (Eq m, Monoid m) => QDiagram b v n m -> QDiagram b v n Any
-resetValue = fmap toAny
-  where toAny m | m == mempty = Any False
-                | otherwise   = Any True
-
--- | Set all the query values of a diagram to 'False'.
-clearValue :: QDiagram b v n m -> QDiagram b v n Any
-clearValue = fmap (const (Any False))
+pointDiagram p = QD $ leafU (mempty & _Wrapped . _1 .~ pointEnvelope p)
 
 -- | Create a diagram from a single primitive, along with an envelope,
 --   trace, subdiagram map, and query function.
-mkQD :: Prim b v n -> Envelope v n -> Trace v n -> SubMap b v n m -> Query v n m
+mkQD :: Prim b v n -> Envelope v n -> Trace v n -> Query v n m
      -> QDiagram b v n m
 mkQD p = mkQD' (PrimLeaf p)
 
 -- | Create a diagram from a generic QDiaLeaf, along with an envelope,
 --   trace, subdiagram map, and query function.
-mkQD' :: QDiaLeaf b v n m -> Envelope v n -> Trace v n -> SubMap b v n m -> Query v n m
+mkQD' :: QDiaLeaf b v n m -> Envelope v n -> Trace v n -> Query v n m
       -> QDiagram b v n m
-mkQD' l e t n q = QD $ D.leaf (UpAnnots (e,t,n,q)) l
-
--- should this be in Diagrams.Combinators?
-
--- | A convenient synonym for 'mappend' on diagrams, designed to be
---   used infix (to help remember which diagram goes on top of which
---   when combining them, namely, the first on top of the second).
-atop :: (OrderedField n, Metric v, Semigroup m)
-     => QDiagram b v n m -> QDiagram b v n m -> QDiagram b v n m
-atop = (<>)
-
-infixl 6 `atop`
+mkQD' l e t q = QD $ leaf (UpAnnots (e,t,mempty,q)) l
 
 -- Instances -----------------------------------------------------------
 
-instance (Metric v, OrderedField n, Semigroup m)
-  => Semigroup (QDiagram b v n m) where
-  QD d1 <> QD d2 = QD (d2 <> d1)
-    -- swap order so that primitives of d2 come first, i.e. will be
-    -- rendered first, i.e. will be on the bottom.
+instance (OrderedField n, Semigroup m) => Semigroup (QDiagram b v n m) where
+  -- Swap order so that primitives of d2 come first, i.e. will be
+  -- rendered first, i.e. will be on the bottom.
+  QD (DUALTree u2 t2) <> QD (DUALTree u1 t1) = QD $
+    -- Ugly cases to get tapes to record concatenation correctly. The
+    -- concatenation of the internal DALTree is the same as the
+    -- semigroup instance, we just need to know what happened for the
+    -- tape.
+    case (t1,t2) of
+      (Concat a, Concat b) -> mk (a <> b) $ u1         <> pf (_head +~ l a) u2
+      (Concat a, b       ) -> mk (a |> b) $ u1         <> pf (l a:) u2
+      (a       , Concat b) -> mk (a <| b) $ pf (0:) u1 <> pf (_head +~ 1) u2
+      (a, b)   -> mk (Seq.fromList [a,b]) $ pf (0:) u1 <> pf (1:) u2
+    where mk t m = DUALTree m (Concat t)
+          pf     = over paths
+          l      = Seq.length
+
+  QD EmptyDUAL <> t2          = t2
+  t1           <> QD EmptyDUAL = t1
+
+-- instance (Metric v, OrderedField n, Semigroup m)
+--   => Semigroup (QDiagram b v n m) where
+  -- QD d1 <> QD d2 = QD (d2 <> d1)
 
 -- | Diagrams form a monoid since each of their components do: the
 --   empty diagram has no primitives, an empty envelope, an empty
@@ -503,28 +698,11 @@ instance (Metric v, OrderedField n, Semigroup m)
 
 instance Functor (QDiagram b v n) where
   fmap f = over _Wrapped
-             $ (D._u . mapped %~ f) -- up annots
+             $ (_u . mapped %~ f) -- up annots
              . (fmap . fmap) f      -- leaves
 
----- Applicative
-
--- XXX what to do with this?
--- A diagram with queries of result type @(a -> b)@ can be \"applied\"
---   to a diagram with queries of result type @a@, resulting in a
---   combined diagram with queries of result type @b@.  In particular,
---   all components of the two diagrams are combined as in the
---   @Monoid@ instance, except the queries which are combined via
---   @(<*>)@.
-
--- instance (Backend b v n, Num n, Ord n)
---            => Applicative (QDiagram b v n) where
---   pure a = Diagram mempty mempty mempty (Query $ const a)
---
---   (Diagram ps1 bs1 ns1 smp1) <*> (Diagram ps2 bs2 ns2 smp2)
---     = Diagram (ps1 <> ps2) (bs1 <> bs2) (ns1 <> ns2) (smp1 <*> smp2)
-
 instance (Metric v, OrderedField n, Semigroup m) => HasStyle (QDiagram b v n m) where
-  applyStyle = over _Wrapped' . D.down . downSty
+  applyStyle = over _Wrapped' . down . downSty
 
 instance (Metric v, OrderedField n, Monoid' m)
     => Juxtaposable (QDiagram b v n m) where
@@ -548,196 +726,52 @@ instance (Metric v, OrderedField n, Semigroup m)
 --   components appropriately.
 instance (OrderedField n, Metric v, Semigroup m)
     => Transformable (QDiagram b v n m) where
-  transform = over _Wrapped' . D.down . downT
+  transform = over _Wrapped' . down . downT
 
--- | Diagrams can be qualified so that all their named points can
---   now be referred to using the qualification prefix.
-instance (Metric v, OrderedField n, Semigroup m)
-    => Qualifiable (QDiagram b v n m) where
-  n .>> d = over subMap (n .>>) d
+-- | All refs on the applying diagram are wiped. All refs on the appied
+--   diagram get applied from the head diagram.
+-- instance (OrderedField n) => Applicative (QDiagram b v n) where
+--   pure a = QD $ leafU (pure a)
 
-------------------------------------------------------------------------
---  Subdiagrams
-------------------------------------------------------------------------
+--   QD (DUALTree u1 t1) <*> QD (DUALTree u2 t2)
+--     = QD $ DUALTree (u1 <*> u2) (t1 <> t2)
 
--- | A @Subdiagram@ represents a diagram embedded within the context
---   of a larger diagram.  Essentially, it consists of a diagram
---   paired with any accumulated information from the larger context
---   (transformations, attributes, etc.).
-
-data Subdiagram b v n m = Subdiagram (QDiagram b v n m) (DownAnnots v n)
-
-type instance V (Subdiagram b v n m) = v
-type instance N (Subdiagram b v n m) = n
-
--- | Turn a diagram into a subdiagram with no accumulated context.
-mkSubdiagram :: QDiagram b v n m -> Subdiagram b v n m
-mkSubdiagram d = Subdiagram d mempty
-
--- | Create a \"point subdiagram\", that is, a 'pointDiagram' (with no
---   content and a point envelope) treated as a subdiagram with local
---   origin at the given point.  Note this is not the same as
---   @mkSubdiagram . pointDiagram@, which would result in a subdiagram
---   with local origin at the parent origin, rather than at the given
---   point.
-subPoint :: (Metric v, OrderedField n, Monoid' m)
-         => Point v n -> Subdiagram b v n m
-subPoint p = Subdiagram
-               (pointDiagram origin)
-               (downT $ translation (p .-. origin))
-
-instance Functor (Subdiagram b v n) where
-  fmap f (Subdiagram d a) = Subdiagram (fmap f d) a
-
-instance (OrderedField n, Metric v, Monoid' m)
-      => Enveloped (Subdiagram b v n m) where
-  getEnvelope (Subdiagram d a) = transform (transfFromAnnot a) $ getEnvelope d
-
-instance (OrderedField n, Metric v, Semigroup m)
-      => Traced (Subdiagram b v n m) where
-  getTrace (Subdiagram d a) = transform (transfFromAnnot a) $ getTrace d
-
-instance (Metric v, OrderedField n)
-      => HasOrigin (Subdiagram b v n m) where
-  moveOriginTo = translate . (origin .-.)
-
-instance (Metric v, Floating n)
-    => Transformable (Subdiagram b v n m) where
-  transform t (Subdiagram d a) = Subdiagram d (downT t <> a)
-
--- | Get the location of a subdiagram; that is, the location of its
---   local origin /with respect to/ the vector space of its parent
---   diagram.  In other words, the point where its local origin
---   \"ended up\".
-location :: (Additive v, Num n) => Subdiagram b v n m -> Point v n
-location (Subdiagram _ a) = transform (transfFromAnnot a) origin
-
--- | Turn a subdiagram into a normal diagram, including the enclosing
---   context.  Concretely, a subdiagram is a pair of (1) a diagram and
---   (2) a \"context\" consisting of an extra transformation and
---   attributes.  @getSub@ simply applies the transformation and
---   attributes to the diagram to get the corresponding \"top-level\"
---   diagram.
-getSub :: (Metric v, OrderedField n, Semigroup m)
-       => Subdiagram b v n m -> QDiagram b v n m
-getSub (Subdiagram d a) = over _Wrapped' (D.down a) d
-
--- | Extract the \"raw\" content of a subdiagram, by throwing away the
---   context.
-rawSub :: Subdiagram b v n m -> QDiagram b v n m
-rawSub (Subdiagram d _) = d
+-- -- | Diagrams can be qualified so that all their named points can
+-- --   now be referred to using the qualification prefix.
+-- instance (Metric v, OrderedField n, Semigroup m)
+--     => Qualifiable (QDiagram b v n m) where
+--   n .>> d = over subMap (n .>>) d
 
 ------------------------------------------------------------------------
--- Subdiagram maps
 ------------------------------------------------------------------------
-
--- | A 'SubMap' is a map associating names to subdiagrams. There can
---   be multiple associations for any given name.
-newtype SubMap b v n m = SubMap (M.Map Name [Subdiagram b v n m])
-  -- See Note [SubMap Set vs list]
-
-instance Wrapped (SubMap b v n m) where
-  type Unwrapped (SubMap b v n m) = M.Map Name [Subdiagram b v n m]
-  _Wrapped' = iso (\(SubMap m) -> m) SubMap
-
-instance Rewrapped (SubMap b v n m) (SubMap b' v' n' m')
-
--- ~~~~ [SubMap Set vs list]
--- In some sense it would be nicer to use
--- Sets instead of a list, but then we would have to put Ord
--- constraints on v everywhere. =P
-
-type instance V (SubMap b v n m) = v
-type instance N (SubMap b v n m) = n
-
-instance Functor (SubMap b v n) where
-  fmap = over _Wrapped . fmap . map . fmap
-
-instance Semigroup (SubMap b v n m) where
-  SubMap s1 <> SubMap s2 = SubMap $ M.unionWith (++) s1 s2
-
--- | 'SubMap's form a monoid with the empty map as the identity, and
---   map union as the binary operation.  No information is ever lost:
---   if two maps have the same name in their domain, the resulting map
---   will associate that name to the concatenation of the information
---   associated with that name.
-instance Monoid (SubMap b v n m) where
-  mempty  = SubMap mempty
-  mappend = (<>)
-
-instance (OrderedField n, Metric v) => HasOrigin (SubMap b v n m) where
-  moveOriginTo = over _Wrapped' . moveOriginTo
-
-instance (Metric v, Floating n) => Transformable (SubMap b v n m) where
-  transform = over _Wrapped' . transform
-
--- | 'SubMap's are qualifiable: if @ns@ is a 'SubMap', then @a .>>
---   ns@ is the same 'SubMap' except with every name qualified by
---   @a@.
-instance Qualifiable (SubMap b v n m) where
-  a .>> SubMap m = SubMap $ M.mapKeys (a .>>) m
-
--- | Construct a 'SubMap' from a list of associations between names
---   and subdiagrams.
-fromNames :: IsName a => [(a, Subdiagram b v n m)] -> SubMap b v n m
-fromNames = SubMap . M.fromListWith (++) . map (toName *** (:[]))
-
--- | Add a name/diagram association to a subMap.
-rememberAs :: IsName a => a -> QDiagram b v n m -> SubMap b v n m -> SubMap b v n m
-rememberAs n b = over _Wrapped' $ M.insertWith (++) (toName n) [mkSubdiagram b]
-
--- | Qualify every name in the 'SubMap'.
-instance Action Name (SubMap b v n m) where
-  act = (.>>)
-
--- | Qualify every name in the 'SubMap'.
-instance Action Name (UpAnnots b v n m) where
-  act = over (_Wrapped . _3) . act
-
--- | Look for the given name in a name map, returning a list of
---   subdiagrams associated with that name.  If no names match the
---   given name exactly, return all the subdiagrams associated with
---   names of which the given name is a suffix.
-lookupSub :: IsName nm => nm -> SubMap b v n m -> Maybe [Subdiagram b v n m]
-lookupSub a (SubMap m)
-  = M.lookup n m `mplus`
-    (flattenNames . filter ((n `nameSuffixOf`) . fst) . M.assocs $ m)
-  where (Name n1) `nameSuffixOf` (Name n2) = n1 `isSuffixOf` n2
-        flattenNames [] = Nothing
-        flattenNames xs = Just . concatMap snd $ xs
-        n = toName a
-
 ------------------------------------------------------------------------
--- Subdiagram maps
 ------------------------------------------------------------------------
-
--- $prim
--- Ultimately, every diagram is essentially a tree whose leaves are /primitives/,
--- basic building blocks which can be rendered by backends.  However,
--- not every backend must be able to render every type of primitive;
--- the collection of primitives a given backend knows how to render is
--- determined by instances of 'Renderable'.
-
--- | A value of type @Prim b v n@ is an opaque (existentially quantified)
---   primitive which backend @b@ knows how to render in vector space @v@.
-data Prim b v n where
-  Prim :: (Transformable p, Typeable p, Renderable p b) => p -> Prim b (V p) (N p)
-
-_Prim :: (Transformable p, Typeable p, Renderable p b) => Prism' (Prim b (V p) (N p)) p
-_Prim = prism' Prim (\(Prim p) -> cast p)
-
-type instance V (Prim b v n) = v
-type instance N (Prim b v n) = n
-
--- | The 'Transformable' instance for 'Prim' just pushes calls to
---   'transform' down through the 'Prim' constructor.
-instance Transformable (Prim b v n) where
-  transform t (Prim p) = Prim (transform t p)
-
--- | The 'Renderable' instance for 'Prim' just pushes calls to
---   'render' down through the 'Prim' constructor.
-instance Renderable (Prim b v n) b where
-  render b (Prim p) = render b p
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
 -- Backends

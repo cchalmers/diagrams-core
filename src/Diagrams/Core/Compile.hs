@@ -52,12 +52,12 @@ import           Linear.Metric hiding (qd)
 
 foldDia' :: (HasLinearMap v, Floating n, Typeable n, Monoid r)
         => (Style v n -> Prim b v n -> r)
-        -> (Annotation -> r -> r)
+        -> (Annotation v n -> r -> r)
         -> n -- 'global' to 'output' scale factor
         -> n -- 'normalised' to 'output' scale factor
         -> QDiagram b v n m -- ^ diagram to fold
         -> r
-foldDia' primF annF g n (QD dual) = foldDUAL lF aF dual
+foldDia' primF aF g n (QD dual) = foldDUAL lF aF dual
   where
     lF d = \case
       PrimLeaf p    ->
@@ -67,13 +67,9 @@ foldDia' primF annF g n (QD dual) = foldDUAL lF aF dual
         let (QD dia) = f d g n
         in  foldDUAL lF aF dia
 
-    -- currently 'Annotation' ignores transforms and styles (this will
-    -- likely change when we add fading)
-    aF _ = annF
-
 foldDia :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, Monoid r)
         => (Style v n -> Prim b v n -> r)
-        -> (Annotation -> r -> r)
+        -> (Annotation v n -> r -> r)
         -> Transformation v n
         -> QDiagram b v n m -- ^ diagram to fold
         -> r
