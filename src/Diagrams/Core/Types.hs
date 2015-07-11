@@ -184,7 +184,7 @@ instance (Typeable n, RealFloat n) => TypeableFloat n
 --
 --   * query functions (see "Diagrams.Core.Query")
 newtype UpAnnots b v n m = UpAnnots (Envelope v n, Trace v n, SubMap b v n m, Query v n m)
-  deriving (Typeable, Semigroup, Monoid, Functor)
+  deriving (Semigroup, Monoid, Functor)
 
 type instance V (UpAnnots b v n m) = v
 type instance N (UpAnnots b v n m) = n
