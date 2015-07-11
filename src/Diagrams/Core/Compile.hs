@@ -32,6 +32,7 @@ module Diagrams.Core.Compile
 import           Control.Lens              hiding (transform)
 import qualified Data.Foldable             as F
 import           Data.Monoid.Coproduct
+import qualified Data.Monoid as            M
 import           Data.Monoid.WithSemigroup (Monoid')
 import           Data.Tree.DUAL            (foldDUAL, foldDUAL')
 import           Data.Typeable
@@ -49,7 +50,7 @@ import           Linear.Metric             hiding (qd)
 #endif
 
 foldDiaWithScales
-  :: (HasLinearMap v, Floating n, Typeable n, Monoid r)
+  :: (HasLinearMap v, Floating n, Typeable n, M.Monoid r)
   => (Style v n -> Prim b v n -> r)
   -> (Annotation b v n -> r -> r)
   -> n -- 'global' to 'output' scale factor
@@ -67,7 +68,7 @@ foldDiaWithScales primF aF g n (QD dual) = foldDUAL lF aF dual
         in  foldDUAL lF aF dia
 
 foldDiaWithScales'
-  :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, Monoid r)
+  :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, M.Monoid r)
   => (Style v n -> Prim b v n -> r)
   -> (Annotation b v n -> r -> r)
   -> (Style v n -> r -> r)
@@ -93,7 +94,7 @@ foldDiaWithScales' primF aF styF g n (QD dual) = foldDUAL' lF aF mkP styF dual
 
 -- | Simple way to fold a diagram into a monadic result.
 foldDia
-  :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, Monoid r)
+  :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, M.Monoid r)
   => (Style v n -> Prim b v n -> r) -- ^ Fold a prim
   -> (Annotation b v n -> r -> r)   -- ^ Apply an annotation
   -> Transformation v n             -- ^ final transform for diagram
@@ -110,7 +111,7 @@ foldDia primF annF t d = foldDiaWithScales primF annF g n d
 --   reset after each group and given as the second argument in the prim
 --   rendering function.
 foldDia'
-  :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, Monoid r)
+  :: (HasLinearMap v, Metric v, OrderedField n, Typeable n, Monoid' m, M.Monoid r)
   => (Style v n -> Prim b v n -> r)
   -> (Annotation b v n -> r -> r)
   -> (Style v n -> r -> r)
