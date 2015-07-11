@@ -136,7 +136,7 @@ import           Data.Typeable
 import           Data.Monoid.Action
 import           Data.Monoid.Coproduct
 import           Data.Monoid.WithSemigroup
-import qualified Data.Tree.DUAL            as D
+import qualified Data.Tree.DUAL.Internal   as D
 
 import           Diagrams.Core.Envelope
 import           Diagrams.Core.HasOrigin
@@ -224,15 +224,21 @@ query = upAnnots . _Wrapped' . _4
 
 -- are these still needed?
 
--- | Replace the envelope of a diagram.
+-- | Replace the envelope of a diagram. Note this is different from
+--   @'set' 'envelope'@ because it will set the envelope for the empty
+--   diagram.
 setEnvelope :: (OrderedField n, Metric v, Monoid' m)
             => Envelope v n -> QDiagram b v n m -> QDiagram b v n m
-setEnvelope = set envelope
+setEnvelope e (QD D.EmptyDUAL) = QD $ D.leafU (mempty & _Wrapped' . _1 .~ e)
+setEnvelope e dia              = set envelope e dia
 
--- | Replace the envelope of a diagram.
+-- | Replace the envelope of a diagram. Note this is different from
+--   @'set' 'trace@ because it will set the trace for the empty
+--   diagram.
 setTrace :: (OrderedField n, Metric v, Monoid' m)
          => Trace v n -> QDiagram b v n m -> QDiagram b v n m
-setTrace = set trace
+setTrace t (QD D.EmptyDUAL) = QD $ D.leafU (mempty & _Wrapped' . _2 .~ t)
+setTrace t dia              = set trace t dia
 
 -- | Monoidal annotations which travel down the diagram tree,
 --   /i.e./ which accumulate along each path to a leaf (and which can
@@ -278,15 +284,21 @@ data QDiaLeaf b v n m
 
 -- | Static annotations which can be placed at a particular node of a
 --   diagram tree.
-data Annotation
+data Annotation b (v :: * -> *) n
   = Href String    -- ^ Hyperlink
   | OpacityGroup Double
   deriving Show
 
+type instance V (Annotation b v n) = v
+type instance N (Annotation b v n) = n
+
+instance Transformable (Annotation b v n) where
+  transform _ = id
+
 -- | Apply a static annotation at the root of a diagram.
 applyAnnotation
   :: (Metric v, OrderedField n, Semigroup m)
-  => Annotation -> QDiagram b v n m -> QDiagram b v n m
+  => Annotation b v n -> QDiagram b v n m -> QDiagram b v n m
 applyAnnotation an (QD dt) = QD (D.annot an dt)
 
 -- | Make a diagram into a hyperlink.  Note that only some backends
@@ -334,7 +346,7 @@ groupOpacity = applyAnnotation . OpacityGroup
 --   is not really a very good name, but it's probably not worth
 --   changing it at this point.
 newtype QDiagram b v n m
-  = QD (D.DUALTree (DownAnnots v n) (UpAnnots b v n m) Annotation (QDiaLeaf b v n m))
+  = QD (D.DUALTree (DownAnnots v n) (UpAnnots b v n m) (Annotation b v n) (QDiaLeaf b v n m))
 #if __GLASGOW_HASKELL__ >= 707
   deriving Typeable
 #else
@@ -347,7 +359,7 @@ instance forall b v. (Typeable b, Typeable1 v) => Typeable2 (QDiagram b v) where
 
 instance Wrapped (QDiagram b v n m) where
   type Unwrapped (QDiagram b v n m) =
-        D.DUALTree (DownAnnots v n) (UpAnnots b v n m) Annotation (QDiaLeaf b v n m)
+        D.DUALTree (DownAnnots v n) (UpAnnots b v n m) (Annotation b v n) (QDiaLeaf b v n m)
   _Wrapped' = iso (\(QD d) -> d) QD
 
 instance Rewrapped (QDiagram b v n m) (QDiagram b' v' n' m')
