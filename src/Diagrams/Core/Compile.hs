@@ -1,9 +1,9 @@
 {-# LANGUAGE CPP                   #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE LambdaCase            #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -29,21 +29,19 @@ module Diagrams.Core.Compile
   )
   where
 
+import           Control.Lens              hiding (transform)
+import qualified Data.Foldable             as F
 import           Data.Monoid.Coproduct
-import           Data.Monoid.MList
 import           Data.Monoid.WithSemigroup (Monoid')
-import           Data.Semigroup
 import           Data.Tree.DUAL            (foldDUAL, foldDUAL')
 import           Data.Typeable
-import qualified Data.Foldable as F
 
-import           Diagrams.Core.Envelope    (OrderedField, size, diameter)
+import           Diagrams.Core.Envelope    (OrderedField, size)
 import           Diagrams.Core.Style
 import           Diagrams.Core.Transform
 import           Diagrams.Core.Types
-import           Diagrams.Core.Style
 
-import           Linear.Metric hiding (qd)
+import           Linear.Metric             hiding (qd)
 
 -- Typeable1 is a depreciated synonym in ghc > 707
 #if __GLASGOW_HASKELL__ >= 707
@@ -130,8 +128,8 @@ foldDia' primF annF styF t d = foldDiaWithScales' primF annF styF g n d
 --
 --   Note: The 'global' factor is the 'avgScale' of the output
 --   transform.
-normalizedFactor :: (Foldable v, Floating n) => v n -> n
-normalizedFactor v = F.product v ** (1 / fromIntegral (F.length v))
+normalizedFactor :: (F.Foldable v, Floating n) => v n -> n
+normalizedFactor v = F.product v ** (1 / fromIntegral (lengthOf folded v))
 
 -- | Render a diagram, returning also the transformation which was
 --   used to convert the diagram from its (\"global\") coordinate
