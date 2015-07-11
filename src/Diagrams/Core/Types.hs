@@ -127,6 +127,7 @@ import           Control.Arrow             (second, (***))
 import           Control.Lens              hiding (transform)
 import           Control.Monad             (mplus)
 import           Data.List                 (isSuffixOf)
+import           Data.Distributive
 import qualified Data.Map                  as M
 import           Data.Maybe                (fromMaybe, listToMaybe)
 import           Data.Semigroup
@@ -194,7 +195,7 @@ instance Wrapped (UpAnnots b v n m) where
   type Unwrapped (UpAnnots b v n m) = (Envelope v n, Trace v n, SubMap b v n m, Query v n m)
   _Wrapped' = iso (\(UpAnnots a) -> a) UpAnnots
 
-instance (Metric v, OrderedField n) => Transformable (UpAnnots b v n m) where
+instance (Metric v, Distributive v, Foldable v, OrderedField n) => Transformable (UpAnnots b v n m) where
   transform = over _Wrapped . transform
 
 -- | Affine traversal over the top level upwards annotations. Does
@@ -260,7 +261,7 @@ downSty = inR
 
 -- | Extract the (total) transformation from a downwards annotation
 --   value.
-transfFromAnnot :: (Additive v, Num n) => DownAnnots v n -> Transformation v n
+transfFromAnnot :: (HasBasis v, Num n) => DownAnnots v n -> Transformation v n
 transfFromAnnot = killR
 
 -- Leafs ---------------------------------------------------------------
@@ -383,7 +384,7 @@ pointDiagram p = QD $ D.leafU (mempty & _Wrapped . _1 .~ pointEnvelope p)
 -- Names ---------------------------------------------------------------
 
 -- | Get a list of names of subdiagrams and their locations.
-names :: (Metric v, Semigroup m, OrderedField n)
+names :: (Metric v, HasBasis v, Semigroup m, OrderedField n)
       => QDiagram b v n m -> [(Name, [Point v n])]
 names = (map . second . map) location . M.assocs . view (subMap . _Wrapped')
 
@@ -535,10 +536,10 @@ instance Functor (QDiagram b v n) where
 --   (Diagram ps1 bs1 ns1 smp1) <*> (Diagram ps2 bs2 ns2 smp2)
 --     = Diagram (ps1 <> ps2) (bs1 <> bs2) (ns1 <> ns2) (smp1 <*> smp2)
 
-instance (Metric v, OrderedField n, Semigroup m) => HasStyle (QDiagram b v n m) where
+instance (Metric v, HasBasis v, OrderedField n, Semigroup m) => HasStyle (QDiagram b v n m) where
   applyStyle = over _Wrapped' . D.down . downSty
 
-instance (Metric v, OrderedField n, Monoid' m)
+instance (Metric v, HasBasis v, OrderedField n, Monoid' m)
     => Juxtaposable (QDiagram b v n m) where
   juxtapose = juxtaposeDefault
 
@@ -552,13 +553,13 @@ instance (Metric v, OrderedField n, Semigroup m)
 
 -- | Every diagram has an intrinsic \"local origin\" which is the
 --   basis for all combining operations.
-instance (Metric v, OrderedField n, Semigroup m)
+instance (Metric v, HasBasis v, OrderedField n, Semigroup m)
     => HasOrigin (QDiagram b v n m) where
   moveOriginTo = translate . (origin .-.)
 
 -- | Diagrams can be transformed by transforming each of their
 --   components appropriately.
-instance (OrderedField n, Metric v, Semigroup m)
+instance (Metric v, HasBasis v, OrderedField n, Semigroup m)
     => Transformable (QDiagram b v n m) where
   transform = over _Wrapped' . D.down . downT
 
@@ -592,7 +593,7 @@ mkSubdiagram d = Subdiagram d mempty
 --   @mkSubdiagram . pointDiagram@, which would result in a subdiagram
 --   with local origin at the parent origin, rather than at the given
 --   point.
-subPoint :: (Metric v, OrderedField n, Monoid' m)
+subPoint :: (Metric v, HasBasis v, OrderedField n, Monoid' m)
          => Point v n -> Subdiagram b v n m
 subPoint p = Subdiagram
                (pointDiagram origin)
@@ -601,15 +602,15 @@ subPoint p = Subdiagram
 instance Functor (Subdiagram b v n) where
   fmap f (Subdiagram d a) = Subdiagram (fmap f d) a
 
-instance (OrderedField n, Metric v, Monoid' m)
+instance (Metric v, HasBasis v, OrderedField n, Monoid' m)
       => Enveloped (Subdiagram b v n m) where
   getEnvelope (Subdiagram d a) = transform (transfFromAnnot a) $ getEnvelope d
 
-instance (OrderedField n, Metric v, Semigroup m)
+instance (Metric v, HasBasis v, OrderedField n, Semigroup m)
       => Traced (Subdiagram b v n m) where
   getTrace (Subdiagram d a) = transform (transfFromAnnot a) $ getTrace d
 
-instance (Metric v, OrderedField n)
+instance (Metric v, HasBasis v, OrderedField n)
       => HasOrigin (Subdiagram b v n m) where
   moveOriginTo = translate . (origin .-.)
 
@@ -621,7 +622,7 @@ instance (Metric v, Floating n)
 --   local origin /with respect to/ the vector space of its parent
 --   diagram.  In other words, the point where its local origin
 --   \"ended up\".
-location :: (Additive v, Num n) => Subdiagram b v n m -> Point v n
+location :: (Additive v, HasBasis v, Num n) => Subdiagram b v n m -> Point v n
 location (Subdiagram _ a) = transform (transfFromAnnot a) origin
 
 -- | Turn a subdiagram into a normal diagram, including the enclosing
@@ -630,7 +631,7 @@ location (Subdiagram _ a) = transform (transfFromAnnot a) origin
 --   attributes.  @getSub@ simply applies the transformation and
 --   attributes to the diagram to get the corresponding \"top-level\"
 --   diagram.
-getSub :: (Metric v, OrderedField n, Semigroup m)
+getSub :: (Metric v, HasBasis v, OrderedField n, Semigroup m)
        => Subdiagram b v n m -> QDiagram b v n m
 getSub (Subdiagram d a) = over _Wrapped' (D.down a) d
 
@@ -677,7 +678,7 @@ instance Monoid (SubMap b v n m) where
   mempty  = SubMap mempty
   mappend = (<>)
 
-instance (OrderedField n, Metric v) => HasOrigin (SubMap b v n m) where
+instance (Metric v, HasBasis v, OrderedField n) => HasOrigin (SubMap b v n m) where
   moveOriginTo = over _Wrapped' . moveOriginTo
 
 instance (Metric v, Floating n) => Transformable (SubMap b v n m) where
@@ -790,7 +791,7 @@ class Backend b v n where
   --
   --   See the diagrams-lib package (particularly the
   --   @Diagrams.TwoD.Adjust@ module) for some useful implementations.
-  adjustDia :: (Additive v, Monoid' m, Num n) => b -> Options b v n
+  adjustDia :: (Additive v, HasBasis v, Monoid' m, Num n) => b -> Options b v n
             -> QDiagram b v n m -> (Options b v n, Transformation v n, QDiagram b v n m)
   adjustDia _ o d = (o,mempty,d)
 

@@ -174,7 +174,7 @@ instance Show (Trace v n) where
 --  Transforming traces  -----------------------------------
 ------------------------------------------------------------
 
-instance (Additive v, Num n) => Transformable (Trace v n) where
+instance (Additive v, Foldable v, Num n) => Transformable (Trace v n) where
   transform t = _Wrapped %~ \f p v -> f (papply (inv t) p) (apply (inv t) v)
 
 ------------------------------------------------------------

@@ -71,8 +71,9 @@ instance Rewrapped (Query v a m) (Query v' a' m')
 type instance V (Query v n m) = v
 type instance N (Query v n m) = n
 
-instance (Additive v, Num n) => HasOrigin (Query v n m) where
+instance (Additive v, Foldable v, Num n) => HasOrigin (Query v n m) where
   moveOriginTo (P u) = queryPoint %~ (.+^ u)
 
-instance (Additive v, Num n) => Transformable (Query v n m) where
+instance (Additive v, Foldable v, Num n) => Transformable (Query v n m) where
   transform t = queryPoint %~ papply (inv t)
+

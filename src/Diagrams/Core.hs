@@ -107,9 +107,6 @@ module Diagrams.Core
        , determinant
        , isReflection
 
-         -- ** Invertible linear transformations
-       , (:-:), (<->), linv, lapp
-
          -- ** General transformations
        , Transformation
        , inv, transp, transl

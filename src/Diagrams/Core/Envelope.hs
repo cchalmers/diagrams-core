@@ -55,6 +55,7 @@ import           Control.Applicative     ((<$>))
 #endif
 import           Control.Lens            (Rewrapped, Wrapped (..), iso, mapped,
                                           op, over, (&), (.~), _Wrapping')
+import           Data.Distributive
 import           Data.Functor.Rep
 import qualified Data.Map                as M
 import           Data.Maybe              (fromMaybe)
@@ -68,6 +69,7 @@ import           Diagrams.Core.V
 
 import           Linear.Metric
 import           Linear.Vector
+import           Linear.Matrix           ((!*))
 
 
 ------------------------------------------------------------
@@ -158,13 +160,13 @@ instance Show (Envelope v n) where
 --  Transforming envelopes  --------------------------------
 ------------------------------------------------------------
 
-instance (Metric v, Floating n) => Transformable (Envelope v n) where
+instance (Metric v, Foldable v, Distributive v, Floating n) => Transformable (Envelope v n) where
   transform t = moveOriginTo (P . negated . transl $ t) . onEnvelope g
     where
       -- XXX add lots of comments explaining this!
       g f v = f v' / (v' `dot` vi)
         where
-          v' = signorm $ lapp (transp t) v
+          v' = signorm $ transp t !* v
           vi = apply (inv t) v
 
 ------------------------------------------------------------

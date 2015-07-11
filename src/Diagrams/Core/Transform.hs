@@ -26,54 +26,55 @@
 -----------------------------------------------------------------------------
 
 module Diagrams.Core.Transform
-       (
-         -- * Transformations
+  (
+    -- * Transformations
 
-         -- ** Invertible linear transformations
-         (:-:)(..), (<->), linv, lapp
+    -- -- ** Invertible linear transformations
+    -- (:-:)(..), (<->), linv, lapp
 
-         -- ** General transformations
-       , Transformation(..)
-       , inv, transp, transl
-       , dropTransl
-       , apply
-       , papply
-       , fromLinear
-       , fromOrthogonal
-       , fromSymmetric
-       , basis
-       , dimension
-       , onBasis
-       , listRep
-       , matrixRep
-       , matrixHomRep
-       , determinant
-       , isReflection
-       , avgScale
-       , eye
+    -- ** General transformations
+    Transformation (..)
+  , inv, transl, transp
+  , dropTransl
+  , apply
+  , papply
+  , fromLinear
+  , fromOrthogonal
+  -- , fromSymmetric
+  , basis
+  , dimension
+  , onBasis
+  , listRep
+  , matrixRep
+  , matrixHomRep
+  , determinant
+  , isReflection
+  , avgScale
+  , eye
 
-         -- * The Transformable class
+    -- * The Transformable class
 
-       , HasLinearMap
-       , HasBasis
-       , Transformable(..)
+  , HasLinearMap
+  , HasBasis
+  , Transformable (..)
 
-         -- * Translational invariance
+    -- * Translational invariance
 
-       , TransInv(TransInv)
+  , TransInv (..)
 
-         -- * Vector space independent transformations
-         -- | Most transformations are specific to a particular vector
-         --   space, but a few can be defined generically over any
-         --   vector space.
+    -- * Vector space independent transformations
+    -- | Most transformations are specific to a particular vector
+    --   space, but a few can be defined generically over any
+    --   vector space.
 
-       , translation, translate
-       , scaling, scale
+  , translation, translate
+  , scaling, scale
 
-       ) where
+  ) where
 
 import           Control.Lens            (Rewrapped, Traversable, Wrapped (..),
                                           iso, (&), (.~))
+import           Data.Distributive
 import           Data.IntMap             (IntMap)
 import           Data.Map                (Map)
 import           Data.Semigroup
@@ -89,6 +90,8 @@ import           Data.Monoid.Deletable
 
 import           Linear.Affine
 import           Linear.Vector
+import           Linear.Matrix hiding (translation)
+import           Linear.Metric (Metric)
 
 import           Data.Foldable           (Foldable, toList)
 import           Data.Functor.Rep
@@ -97,43 +100,9 @@ import           Diagrams.Core.HasOrigin
 import           Diagrams.Core.Points    ()
 import           Diagrams.Core.V
 
-------------------------------------------------------------
---  Transformations  ---------------------------------------
-------------------------------------------------------------
-
--------------------------------------------------------
---  Invertible linear transformations  ----------------
--------------------------------------------------------
-
--- | @(v1 :-: v2)@ is a linear map paired with its inverse.
-data (:-:) u v = (u -> v) :-: (v -> u)
-infixr 7 :-:
-
--- | Create an invertible linear map from two functions which are
---   assumed to be linear inverses.
-(<->) :: (u -> v) -> (v -> u) -> (u :-: v)
-f <-> g = f :-: g
-
-instance Semigroup (a :-: a) where
-  (f :-: f') <> (g :-: g') = f . g :-: g' . f'
-
--- | Invertible linear maps from a vector space to itself form a
---   monoid under composition.
-instance Monoid (v :-: v) where
-  mempty  = id :-: id
-  mappend = (<>)
-
--- | Invert a linear map.
-linv :: (u :-: v) -> (v :-: u)
-linv (f :-: g) = g :-: f
-
--- | Apply a linear map to a vector.
-lapp :: (u :-: v) -> u -> v
-lapp (f :-: _) = f
-
---------------------------------------------------
---  Affine transformations  ----------------------
---------------------------------------------------
+------------------------------------------------------------------------
+--  Affine transformations
+------------------------------------------------------------------------
 
 -- | General (affine) transformations, represented by an invertible
 --   linear map, its /transpose/, and a vector representing a
@@ -158,7 +127,15 @@ lapp (f :-: _) = f
 --   For more general, non-invertible transformations, see
 --   @Diagrams.Deform@ (in @diagrams-lib@).
 
-data Transformation v n = Transformation (v n :-: v n) (v n :-: v n) (v n)
+data Transformation v n = T !(v (v n)) !(v (v n)) !(v n)
+
+-- It is possible to do this with just Show1 but it requires ticks
+-- (using the constraints package)
+instance (Show (v (v n)), Show (v n), Show n) => Show (Transformation v n) where
+  showsPrec p (T m mInv v) = showParen (p > 10) $
+    showString "T " . showsPrec 11 m
+     . showChar ' ' . showsPrec 11 mInv
+     . showChar ' ' . showsPrec 11 v
 
 type instance V (Transformation v n) = v
 type instance N (Transformation v n) = n
@@ -168,61 +145,70 @@ eye :: (HasBasis v, Num n) => v (v n)
 eye = tabulate $ \(E e) -> zero & e .~ 1
 
 -- | Invert a transformation.
-inv :: (Functor v, Num n) => Transformation v n -> Transformation v n
-inv (Transformation t t' v) = Transformation (linv t) (linv t')
-                                             (negated (lapp (linv t) v))
+inv :: (Additive v, Foldable v, Num n) => Transformation v n -> Transformation v n
+inv (T m mInv v) = T mInv m (negated v *! mInv)
 
--- | Get the transpose of a transformation (ignoring the translation
---   component).
-transp :: Transformation v n -> (v n :-: v n)
-transp (Transformation _ t' _) = t'
+-- -- | Get the transpose of a transformation (ignoring the translation
+-- --   component).
+-- transp :: Transformation v n -> (v n :-: v n)
+-- transp (Transformation _ t' _) = t'
 
 -- | Get the translational component of a transformation.
 transl :: Transformation v n -> v n
-transl (Transformation _ _ v) = v
+transl (T _ _ v) = v
+
+-- | Get the translational component of a transformation.
+transp :: Distributive v => Transformation v n -> v (v n)
+transp (T m _ _) = distribute m
 
 -- | Drop the translational component of a transformation, leaving only
 --   the linear part.
 dropTransl :: (Additive v, Num n) => Transformation v n -> Transformation v n
-dropTransl (Transformation a a' _) = Transformation a a' zero
+dropTransl (T a a' _) = T a a' zero
 
 -- | Transformations are closed under composition; @t1 <> t2@ is the
 --   transformation which performs first @t2@, then @t1@.
-instance (Additive v, Num n) => Semigroup (Transformation v n) where
-  Transformation t1 t1' v1 <> Transformation t2 t2' v2
-    = Transformation (t1 <> t2) (t2' <> t1') (v1 ^+^ lapp t1 v2)
+instance (Additive v, Foldable v, Num n) => Semigroup (Transformation v n) where
+  T m1 m1Inv v1 <> T m2 m2Inv v2
+    = T (m1 !*! m2) (m2Inv !*! m1Inv) (v1 ^+^ m1 !* v2)
+  {-# INLINE (<>) #-}
 
-instance (Additive v, Num n) => Monoid (Transformation v n) where
-  mempty = Transformation mempty mempty zero
+instance (HasBasis v, Foldable v, Num n) => Monoid (Transformation v n) where
+  mempty  = T eye eye zero
+  {-# INLINE mempty #-}
   mappend = (<>)
+  {-# INLINE mappend #-}
 
 -- | Transformations can act on transformable things.
 instance (Transformable a, V a ~ v, N a ~ n) => Action (Transformation v n) a where
   act = transform
+  {-# INLINE act #-}
 
 -- | Apply a transformation to a vector.  Note that any translational
 --   component of the transformation will not affect the vector, since
 --   vectors are invariant under translation.
-apply :: Transformation v n -> v n -> v n
-apply (Transformation (t :-: _) _ _) = t
+apply :: (Additive v, Foldable v, Num n) => Transformation v n -> v n -> v n
+apply (T m _ _) = (m !*)
+{-# INLINE apply #-}
 
 -- | Apply a transformation to a point.
-papply :: (Additive v, Num n) => Transformation v n -> Point v n -> Point v n
-papply (Transformation t _ v) (P p) = P $ lapp t p ^+^ v
+papply :: (Additive v, Foldable v, Num n) => Transformation v n -> Point v n -> Point v n
+papply (T t _ v) (P p) = P $ t !* p ^+^ v
+{-# INLINE papply #-}
 
 -- | Create a general affine transformation from an invertible linear
 --   transformation and its transpose.  The translational component is
 --   assumed to be zero.
-fromLinear :: (Additive v, Num n) => (v n :-: v n) -> (v n :-: v n) -> Transformation v n
-fromLinear l1 l2 = Transformation l1 l2 zero
+fromLinear :: (Additive v, Num n) => v (v n) -> v (v n) -> Transformation v n
+fromLinear l1 l2 = T l1 l2 zero
 
 -- | An orthogonal linear map is one whose inverse is also its transpose.
-fromOrthogonal :: (Additive v, Num n) => (v n :-: v n) -> Transformation v n
-fromOrthogonal t = fromLinear t (linv t)
+fromOrthogonal :: (Additive v, Distributive v, Num n) => v (v n) -> Transformation v n
+fromOrthogonal t = fromLinear t (transpose t)
 
--- | A symmetric linear map is one whose transpose is equal to its self.
-fromSymmetric :: (Additive v, Num n) => (v n :-: v n) -> Transformation v n
-fromSymmetric t = fromLinear t t
+-- -- | A symmetric linear map is one whose transpose is equal to its self.
+-- fromSymmetric :: (Additive v, Num n) => (v n :-: v n) -> Transformation v n
+-- fromSymmetric t = fromLinear t t
 
 -- | Get the dimension of an object whose vector space is an instance of
 --   @HasLinearMap@, e.g. transformations, paths, diagrams, etc.
@@ -233,7 +219,7 @@ dimension _ = length (basis :: [v Int])
 --   (as a list of columns) and the translation vector.  This
 --   is mostly useful for implementing backends.
 onBasis :: (Additive v, Traversable v, Num n) => Transformation v n -> ([v n], v n)
-onBasis (Transformation (f :-: _) _ t) = (map f basis, t)
+onBasis (T m _ v) = (map (m !*) basis, v)
 
 -- Remove the nth element from a list
 remove :: Int -> [a] -> [a]
@@ -261,7 +247,7 @@ listRep = toList
 -- | Convert the linear part of a `Transformation` to a matrix
 --   representation as a list of column vectors which are also lists.
 matrixRep :: (Additive v, Traversable v, Num n) => Transformation v n -> [[n]]
-matrixRep (Transformation (f :-: _) _ _) = map (toList . f) basis
+matrixRep (T m _ _) = map (toList . (m !*)) basis
 
 -- | Convert a `Transformation v` to a homogeneous matrix representation.
 --   The final list is the translation.
@@ -316,12 +302,12 @@ Proofs for the specified properties:
 
 -- | 'HasLinearMap' is a poor man's class constraint synonym, just to
 --   help shorten some of the ridiculously long constraint sets.
-class (HasBasis v, Traversable v) => HasLinearMap v
-instance (HasBasis v, Traversable v) => HasLinearMap v
+class (Metric v, HasBasis v, Traversable v) => HasLinearMap v
+instance (Metric v, HasBasis v, Traversable v) => HasLinearMap v
 
 -- | An 'Additive' vector space whose representation is made up of basis elements.
-class (Additive v, Representable v, Rep v ~ E v) => HasBasis v
-instance (Additive v, Representable v, Rep v ~ E v) => HasBasis v
+class (Additive v, Foldable v, Representable v, Rep v ~ E v) => HasBasis v
+instance (Additive v, Foldable v, Representable v, Rep v ~ E v) => HasBasis v
 
 -- | Type class for things @t@ which can be transformed.
 class Transformable a where
@@ -331,16 +317,20 @@ class Transformable a where
 
   default transform :: Functor f => Transformation (V a) (N a) -> f a -> f a
   transform = fmap . transform
+  {-# INLINE transform #-}
 
-instance (Additive v, Num n) => Transformable (Transformation v n) where
+instance (Additive v, Foldable v, Num n) => Transformable (Transformation v n) where
   transform t1 t2 = t1 <> t2
+  {-# INLINE transform #-}
 
 instance (Additive v, Num n) => HasOrigin (Transformation v n) where
-  moveOriginTo p = translate (origin .-. p)
+  moveOriginTo (P p) (T m mInv v) = T m mInv (v ^-^ p)
+  {-# INLINE moveOriginTo #-}
+  -- moveOriginTo p = translate (origin .-. p)
 
 instance (SameSpace a b, Transformable a, Transformable b)
     => Transformable (a, b) where
-  transform t (x,y) =  (transform t x , transform t y)
+  transform t (x,y) =  (transform t x, transform t y)
 
 instance (SameSpace a b, SameSpace b c, Transformable a, Transformable b, Transformable c)
     => Transformable (a,b,c) where
@@ -357,11 +347,11 @@ instance (SameSpace a b, SameSpace b c, SameSpace c d,
 -- rotating left. Etc. This technique was used extensively in Pan for modular
 -- construction of image filters. Works well for curried functions, since all
 -- arguments get inversely transformed.
-instance (SameSpace a b, Functor (V b), Num (N b), Transformable a, Transformable b)
+instance (SameSpace a b, Additive (V b), Foldable (V a), Num (N b), Transformable a, Transformable b)
     => Transformable (a -> b) where
   transform t f = transform t . f . transform (inv t)
 
-instance (Additive v, Num n) => Transformable (Point v n) where
+instance (Additive v, Foldable v, Num n) => Transformable (Point v n) where
   transform = papply
 
 instance (Transformable a, Ord a) => Transformable (S.Set a) where
@@ -403,28 +393,27 @@ instance HasOrigin (TransInv t) where
   moveOriginTo = const id
 
 instance (Num (N t), Additive (V t), Transformable t) => Transformable (TransInv t) where
-  transform (Transformation a a' _) (TransInv t)
-    = TransInv (transform (Transformation a a' zero) t)
+  transform (T a a' _) (TransInv t)
+    = TransInv (transform (T a a' zero) t)
 
 ------------------------------------------------------------
 --  Generic transformations  -------------------------------
 ------------------------------------------------------------
 
 -- | Create a translation.
-translation :: v n -> Transformation v n
-translation = Transformation mempty mempty
+translation :: (HasBasis v, Num n) => v n -> Transformation v n
+translation = T eye eye
 
 -- | Translate by a vector.
-translate :: (Num (N t), Transformable t) => Vn t -> t -> t
+translate :: (InSpace v n t, HasBasis v, Num n, Transformable t) => v n -> t -> t
 translate = transform . translation
 
 -- | Create a uniform scaling transformation.
-scaling :: (Additive v, Fractional n) => n -> Transformation v n
-scaling s = fromSymmetric lin
-  where lin = (s *^) <-> (^/ s)
+scaling :: (HasBasis v, Fractional n) => n -> Transformation v n
+scaling s = fromLinear (fmap (s *^) eye) (fmap (^/ s) eye)
 
 -- | Scale uniformly in every dimension by the given scalar.
-scale :: (InSpace v n a, Eq n, Fractional n, Transformable a)
+scale :: (InSpace v n a, HasBasis v, Eq n, Fractional n, Transformable a)
       => n -> a -> a
 scale 0 = error "scale by zero!  Halp!"  -- XXX what should be done here?
 scale s = transform $ scaling s
